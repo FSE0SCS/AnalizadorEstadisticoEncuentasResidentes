@@ -13,3 +13,4 @@ openai
 anthropic
 transformers
 Pillow
+es_core_news_sm

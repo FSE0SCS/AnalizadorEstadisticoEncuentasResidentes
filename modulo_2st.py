@@ -4,11 +4,11 @@ import pandas as pd
 import numpy as np
 import nltk
 from nltk.corpus import stopwords
-from nltk.stem import PorterStemmer
+from nltk.stem import PorterStemmer # Se usó PorterStemmer en el original, aunque SnowballStemmer es más común para español
 from nltk.tokenize import word_tokenize
 import spacy
 from textblob import TextBlob
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer # CountVectorizer para LDA
 from sklearn.decomposition import NMF, LatentDirichletAllocation
 from docx import Document
 from docx.shared import Inches
@@ -21,7 +21,8 @@ import anthropic
 from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 import streamlit as st
 from datetime import datetime
-import re # Para limpieza de texto
+import re
+import os
 
 # --- Configuración Inicial y Descarga de Recursos (Adaptado para Streamlit) ---
 
@@ -29,37 +30,41 @@ import re # Para limpieza de texto
 plt.rcParams["figure.figsize"] = (10, 6)
 sns.set_style("whitegrid")
 
-# Cachea los recursos para evitar descargas repetidas en cada re-ejecución de Streamlit
+# Define una ruta persistente para los datos de NLTK dentro del directorio de la aplicación
+# Esto asegura que los datos se guarden en un lugar accesible y persistente en Streamlit Cloud
+NLTK_DATA_PATH = os.path.join(os.path.dirname(__file__), "nltk_data")
+
 @st.cache_resource
 def download_nltk_resources():
+    # Asegúrate de que la ruta de datos de NLTK exista y se añada a las rutas de búsqueda
+    if NLTK_DATA_PATH not in nltk.data.path:
+        nltk.data.path.append(NLTK_DATA_PATH)
+    os.makedirs(NLTK_DATA_PATH, exist_ok=True) # Crea el directorio si no existe
+
     try:
-        nltk.data.find('corpora/stopwords')
+        nltk.data.find('corpora/stopwords', paths=[NLTK_DATA_PATH]) # Busca en la ruta específica
     except Exception as e:
         st.warning(f"Error al encontrar stopwords de NLTK, intentando descargar: {e}")
-        nltk.download('stopwords')
+        nltk.download('stopwords', download_dir=NLTK_DATA_PATH) # Descarga a la ruta específica
     try:
-        nltk.data.find('tokenizers/punkt')
+        nltk.data.find('tokenizers/punkt', paths=[NLTK_DATA_PATH]) # Busca en la ruta específica
     except Exception as e:
         st.warning(f"Error al encontrar tokenizers/punkt de NLTK, intentando descargar: {e}")
-        nltk.download('punkt')
+        nltk.download('punkt', download_dir=NLTK_DATA_PATH) # Descarga a la ruta específica
     st.success("Recursos de NLTK (stopwords, punkt) cargados.")
 
 @st.cache_resource
 def load_spacy_model():
+    # Como 'es_core_news_sm' ahora está en requirements.txt, pip lo instalará.
+    # Solo necesitamos cargarlo.
     try:
         nlp_es = spacy.load("es_core_news_sm")
         st.success("Modelo spaCy 'es_core_news_sm' cargado.")
         return nlp_es
-    except OSError:
-        st.warning("Modelo spaCy 'es_core_news_sm' no encontrado. Intentando descargar...")
-        try:
-            spacy.cli.download("es_core_news_sm")
-            nlp_es = spacy.load("es_core_news_sm")
-            st.success("Modelo spaCy 'es_core_news_sm' descargado y cargado.")
-            return nlp_es
-        except Exception as e:
-            st.error(f"Error al descargar o cargar el modelo spaCy 'es_core_news_sm': {e}. Algunas funcionalidades de PLN podrían no funcionar.")
-            return None
+    except Exception as e:
+        # Si falla aquí, es que pip no pudo instalarlo o hay un problema con la carga
+        st.error(f"Error al cargar el modelo spaCy 'es_core_news_sm': {e}. Asegúrate de que está correctamente instalado.")
+        return None
 
 download_nltk_resources()
 nlp_es = load_spacy_model()
@@ -68,6 +73,8 @@ nlp_es = load_spacy_model()
 @st.cache_resource
 def load_roberta_sentiment_model():
     try:
+        # Asegúrate de que los modelos se descarguen en un directorio de caché de transformers
+        # que Streamlit pueda manejar. Esto suele ser automático.
         tokenizer = AutoTokenizer.from_pretrained("dccuchile/bert-base-spanish-wwm-cased")
         model = AutoModelForSequenceClassification.from_pretrained("dccuchile/bert-base-spanish-wwm-cased")
         sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
@@ -113,10 +120,12 @@ def _tokenize_and_stem(text, lang='spanish'):
     try:
         stop_words = set(stopwords.words(lang))
     except LookupError:
-        download_nltk_resources() # Reintentar descarga si falla
+        # Esto ya debería estar cubierto por download_nltk_resources()
+        # pero como fallback, se puede intentar descargar aquí también
+        nltk.download('stopwords', download_dir=NLTK_DATA_PATH)
         stop_words = set(stopwords.words(lang))
 
-    stemmer = PorterStemmer()
+    stemmer = PorterStemmer() # Originalmente usaba PorterStemmer
     words = word_tokenize(text)
     filtered_words = [stemmer.stem(w) for w in words if w.isalpha() and w not in stop_words]
     return filtered_words
@@ -227,9 +236,10 @@ def perform_sentiment_analysis(df, text_columns):
             roberta_sentiment_scores = []
             for res in roberta_sentiments:
                 label = res['label']
-                if label == 'POS': roberta_sentiment_scores.append(res['score'])
-                elif label == 'NEG': roberta_sentiment_scores.append(-res['score'])
-                else: roberta_sentiment_scores.append(0) # Neutro o desconocido
+                # Ajuste para manejar diferentes etiquetas de modelos de sentimiento si es necesario
+                if label == 'POS' or label == 'LABEL_2': roberta_sentiment_scores.append(res['score'])
+                elif label == 'NEG' or label == 'LABEL_0': roberta_sentiment_scores.append(-res['score'])
+                else: roberta_sentiment_scores.append(0) # Neutro o desconocido (LABEL_1)
 
         avg_roberta_sentiment = np.mean(roberta_sentiment_scores) if roberta_sentiment_scores else 0
 
@@ -252,7 +262,7 @@ def perform_sentiment_analysis(df, text_columns):
         
         # Generar gráfico de distribución de subjetividad (TextBlob)
         fig_sub_tb, ax_sub_tb = plt.subplots(figsize=(8, 5))
-        sns.histplot(subjectivities_tb, kde=True, ax=sub_tb, bins=20, color='lightgreen')
+        sns.histplot(subjectivities_tb, kde=True, ax=ax_sub_tb, bins=20, color='lightgreen')
         ax_sub_tb.set_title(f"Distribución de Subjetividad (TextBlob) en '{col}'")
         ax_sub_tb.set_xlabel("Subjetividad (0 a 1)")
         ax_sub_tb.set_ylabel("Frecuencia")
@@ -295,8 +305,13 @@ def perform_topic_modeling(df, text_columns, num_topics=5, method='NMF', use_lem
             processed_text = [' '.join(_lemmatize_text(text, nlp_model)) for text in corpus]
         else:
             processed_text = [' '.join(_tokenize_and_stem(text)) for text in corpus]
-
-        vectorizer = TfidfVectorizer(max_df=0.95, min_df=2, max_features=1000, stop_words=stopwords.words('spanish'))
+        
+        # Para LDA, generalmente se prefiere CountVectorizer
+        if method == 'LDA':
+            vectorizer = CountVectorizer(max_df=0.95, min_df=2, max_features=1000, stop_words=stopwords.words('spanish'))
+        else: # NMF
+            vectorizer = TfidfVectorizer(max_df=0.95, min_df=2, max_features=1000, stop_words=stopwords.words('spanish'))
+            
         dtm = vectorizer.fit_transform(processed_text)
         feature_names = vectorizer.get_feature_names_out()
 
@@ -372,10 +387,10 @@ def setup_anthropic():
 #        # tokenizer = AutoTokenizer.from_pretrained(model_id, token=hf_token)
 #        # model = AutoModelForCausalLM.from_pretrained(model_id, token=hf_token)
 #        # return {"tokenizer": tokenizer, "model": model}
-#        _log_message_streamlit("Meta Llama 3 (vía Hugging Face) configurado. (Requiere implementación específica)", "info")
+#        st.info("Meta Llama 3 (vía Hugging Face) configurado. (Requiere implementación específica)", "info")
 #        return "Llama3_Ready_Placeholder" # Placeholder
 #    else:
-#        _log_message_streamlit("Clave HF_TOKEN para Llama 3 no encontrada en st.secrets.", "warning")
+#        st.warning("Clave HF_TOKEN para Llama 3 no encontrada en st.secrets.", "warning")
 #        return None
 
 gemini_model = setup_gemini()
@@ -455,7 +470,9 @@ def export_qualitative_results_to_word(analysis_results_sequence):
 
     for item_type, title, content in analysis_results_sequence:
         if item_type == 'text':
-            doc.add_heading(title, level=1) # Usar el título para el heading
+            # Asegurarse de que los títulos se añadan como encabezados de Word
+            if title:
+                doc.add_heading(title, level=1) 
             doc.add_paragraph(content)
         elif item_type == 'image_bytes':
             try:
@@ -480,7 +497,7 @@ def run_qualitative_analysis_streamlit(df_input, text_columns, analysis_options,
     ai_prompt: El prompt a usar para la interacción con la IA (si se usa).
     ai_model_choice: El modelo de IA a usar (e.g., "Google Gemini").
     
-    Devuelve una lista de resultados (texto y figuras), y los bytes del documento Word.
+    Devuelve una lista de resultados (texto y figuras de matplotlib), y los bytes del documento Word.
     """
     if df_input is None or df_input.empty:
         _log_message_streamlit("No se han cargado datos válidos para el análisis cualitativo.", "warning")
@@ -495,9 +512,14 @@ def run_qualitative_analysis_streamlit(df_input, text_columns, analysis_options,
     # === Análisis de Frecuencia ===
     if analysis_options.get('frequency', False):
         freq_results, freq_figures = perform_frequency_analysis(df_input, text_columns, use_lemmas=True, nlp_model=nlp_es)
-        analysis_results_sequence.append(('text', "Análisis de Frecuencia de Palabras y N-gramas", 
-                                          "Resultados de frecuencia para las columnas seleccionadas:\n" + 
-                                          "\n".join([f"**{col}**:\n{res.to_string()}\n" for col, res in freq_results.items()])))
+        
+        # Formatear resultados de frecuencia para el informe
+        freq_text_content = "Resultados de frecuencia para las columnas seleccionadas:\n\n"
+        for col, res in freq_results.items():
+            freq_text_content += f"**Columna: {col}**\n"
+            freq_text_content += res.to_string() + "\n\n" # Convertir DataFrame a string
+        analysis_results_sequence.append(('text', "Análisis de Frecuencia de Palabras y N-gramas", freq_text_content))
+        
         for col_name, fig in freq_figures:
             buf = io.BytesIO()
             fig.savefig(buf, format="png", bbox_inches="tight", dpi=200)
@@ -508,9 +530,16 @@ def run_qualitative_analysis_streamlit(df_input, text_columns, analysis_options,
     # === Análisis de Sentimiento ===
     if analysis_options.get('sentiment', False):
         sentiment_results, sentiment_figures = perform_sentiment_analysis(df_input, text_columns)
-        analysis_results_sequence.append(('text', "Análisis de Sentimiento", 
-                                          "Resultados del análisis de sentimiento para las columnas seleccionadas:\n" + 
-                                          "\n".join([f"**{col}**:\n{str(res)}\n" for col, res in sentiment_results.items()])))
+        
+        # Formatear resultados de sentimiento para el informe
+        sentiment_text_content = "Resultados del análisis de sentimiento para las columnas seleccionadas:\n\n"
+        for col, res in sentiment_results.items():
+            sentiment_text_content += f"**Columna: {col}**\n"
+            sentiment_text_content += f"  Polaridad TextBlob (Promedio): {res.get('TextBlob_Polaridad_Promedio', 'N/A'):.2f}\n"
+            sentiment_text_content += f"  Subjetividad TextBlob (Promedio): {res.get('TextBlob_Subjetividad_Promedio', 'N/A'):.2f}\n"
+            sentiment_text_content += f"  Sentimiento RoBERTa (Promedio): {res.get('RoBERTa_Sentimiento_Promedio', 'N/A') if isinstance(res.get('RoBERTa_Sentimiento_Promedio'), (int, float)) else res.get('RoBERTa_Sentimiento_Promedio', 'N/A') :.2f}\n\n"
+        analysis_results_sequence.append(('text', "Análisis de Sentimiento", sentiment_text_content))
+        
         for col_name, fig in sentiment_figures:
             buf = io.BytesIO()
             fig.savefig(buf, format="png", bbox_inches="tight", dpi=200)
@@ -523,20 +552,32 @@ def run_qualitative_analysis_streamlit(df_input, text_columns, analysis_options,
         num_topics = analysis_options.get('num_topics', 5)
         topic_method = analysis_options.get('topic_method', 'NMF')
         topic_results, _ = perform_topic_modeling(df_input, text_columns, num_topics, topic_method, use_lemmas=True, nlp_model=nlp_es)
-        analysis_results_sequence.append(('text', "Modelado de Temas", 
-                                          "Temas identificados para las columnas seleccionadas:\n" + 
-                                          "\n".join([f"**{col}**:\n" + "\n".join(topics) + "\n" for col, topics in topic_results.items()])))
+        
+        # Formatear resultados de modelado de temas para el informe
+        topic_text_content = "Temas identificados para las columnas seleccionadas:\n\n"
+        for col, topics_list in topic_results.items():
+            topic_text_content += f"**Columna: {col}**\n"
+            for topic_str in topics_list:
+                topic_text_content += f"- {topic_str}\n"
+            topic_text_content += "\n"
+        analysis_results_sequence.append(('text', "Modelado de Temas", topic_text_content))
 
     # === Interacción con IA ===
     if ai_model_choice and ai_prompt:
         # Concatenar todo el texto de las columnas seleccionadas para el prompt de IA
-        all_text_for_ai = " ".join(df_input[text_columns].astype(str).sum(axis=1).tolist())
+        # Asegurarse de que el texto se concatene correctamente y se limpie
+        all_text_for_ai = ""
+        for col in text_columns:
+            if col in df_input.columns:
+                all_text_for_ai += " ".join(df_input[col].astype(str).dropna().tolist()) + " "
+        
         all_text_for_ai = _clean_text(all_text_for_ai) # Limpiar el texto combinado
 
         if all_text_for_ai:
-            st.info(f"Enviando {len(all_text_for_ai)} caracteres de texto a {ai_model_choice}...")
+            _log_message_streamlit(f"Enviando {len(all_text_for_ai)} caracteres de texto a {ai_model_choice}...", "info")
             # Limitar el tamaño del texto enviado a la IA para evitar límites de token
-            if len(all_text_for_ai) > 10000: # Ejemplo de límite, ajustar según el modelo
+            # Un límite de 10,000 caracteres es un buen punto de partida, ajustar según el modelo y el costo
+            if len(all_text_for_ai) > 10000:
                 _log_message_streamlit("Texto de entrada a la IA es muy largo, se truncará a 10,000 caracteres.", "warning")
                 all_text_for_ai = all_text_for_ai[:10000]
 
@@ -549,10 +590,3 @@ def run_qualitative_analysis_streamlit(df_input, text_columns, analysis_options,
     word_doc_bytes = export_qualitative_results_to_word(analysis_results_sequence)
     _log_message_streamlit("✅ Análisis cualitativo completado.", "success")
     return analysis_results_sequence, word_doc_bytes, "Success"
-
-# --- NOTA sobre prompt_creator_app.py ---
-# La funcionalidad de `prompt_creator_app.py` no está integrada directamente aquí,
-# sino que se espera que se gestione a nivel de `app.py` o en un módulo `prompt_creator_app_st.py`
-# separado que exponga las funciones para generar prompts.
-# Si se desea usar un prompt generado por `prompt_creator_app_st.py`, se pasaría
-# como el argumento `ai_prompt` a `run_qualitative_analysis_streamlit`.
