@@ -34,11 +34,13 @@ sns.set_style("whitegrid")
 def download_nltk_resources():
     try:
         nltk.data.find('corpora/stopwords')
-    except nltk.downloader.DownloadError:
+    except Exception as e:
+        st.warning(f"Error al encontrar stopwords de NLTK, intentando descargar: {e}")
         nltk.download('stopwords')
     try:
         nltk.data.find('tokenizers/punkt')
-    except nltk.downloader.DownloadError:
+    except Exception as e:
+        st.warning(f"Error al encontrar tokenizers/punkt de NLTK, intentando descargar: {e}")
         nltk.download('punkt')
     st.success("Recursos de NLTK (stopwords, punkt) cargados.")
 
