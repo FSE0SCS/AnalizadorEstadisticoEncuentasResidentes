@@ -1,5 +1,5 @@
-# Usa una imagen base de Python más completa para asegurar las herramientas de compilación
-FROM python:3.11
+# Usa una imagen base de Python más completa y estable para asegurar las herramientas de compilación
+FROM python:3.9
 
 # Establece el directorio de trabajo dentro del contenedor
 WORKDIR /app
@@ -11,17 +11,16 @@ COPY prompt_data.db .
 # Actualiza pip, setuptools y wheel
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Instala las dependencias de Python
-# La imagen base "python:3.11" ya incluye la mayoría de las herramientas de construcción,
-# por lo que la línea `apt-get install` anterior podría no ser estrictamente necesaria ahora,
-# pero la mantendremos por si acaso.
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#     gcc \
-#     g++ \
-#     build-essential \
-#     python3-dev \
-#     && rm -rf /var/lib/apt/lists/*
+# Instala las dependencias del sistema necesarias para compilar ciertas librerías (como thinc/spaCy)
+# Descomentado para asegurar la presencia de herramientas de compilación
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    build-essential \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
+# Instala las dependencias de Python
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Descarga los datos de NLTK durante la construcción de la imagen
