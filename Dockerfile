@@ -1,6 +1,5 @@
-# Usa una imagen base de Python. Python 3.11 es una buena opción estable.
-# Asegúrate de que la versión de Python aquí sea compatible con tus librerías.
-FROM python:3.11-slim-buster
+# Usa una imagen base de Python más completa para asegurar las herramientas de compilación
+FROM python:3.11
 
 # Establece el directorio de trabajo dentro del contenedor
 WORKDIR /app
@@ -9,9 +8,20 @@ WORKDIR /app
 COPY requirements.txt .
 COPY prompt_data.db .
 
+# Actualiza pip, setuptools y wheel
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
 # Instala las dependencias de Python
-# `--no-cache-dir` para no guardar el caché de pip, reduciendo el tamaño de la imagen
-# `uv` es el nuevo instalador de Streamlit, pero pip es más universal para Dockerfiles
+# La imagen base "python:3.11" ya incluye la mayoría de las herramientas de construcción,
+# por lo que la línea `apt-get install` anterior podría no ser estrictamente necesaria ahora,
+# pero la mantendremos por si acaso.
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     gcc \
+#     g++ \
+#     build-essential \
+#     python3-dev \
+#     && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Descarga los datos de NLTK durante la construcción de la imagen
@@ -20,15 +30,8 @@ ENV NLTK_DATA /app/nltk_data
 RUN python -c "import nltk; nltk.download('stopwords', download_dir='/app/nltk_data'); nltk.download('punkt', download_dir='/app/nltk_data')"
 
 # Descarga el modelo de spaCy.
-# 'es_core_news_sm' ya está en requirements.txt, pero esta línea asegura su instalación
-# y que los datos asociados estén disponibles para spaCy.
-# Si ya está en requirements.txt, pip lo instalará, pero esta línea asegura que spacy lo "reconozca"
-# y lo configure internamente si es necesario.
-# Sin embargo, la forma más limpia es que `pip install es_core_news_sm` ya lo haga.
-# Si `pip install es_core_news_sm` no instala los datos, entonces necesitaríamos `spacy download es_core_news_sm`.
-# Pero como lo hemos añadido a requirements.txt, pip debería manejarlo.
-# Si el error persiste, descomentar la siguiente línea:
-# RUN python -m spacy download es_core_news_sm
+# 'es_core_news_sm' ya está en requirements.txt, por lo que pip lo instalará.
+# No es necesario un comando `spacy download` adicional si pip lo maneja.
 
 # Copia el resto de los archivos de tu aplicación al contenedor
 COPY . .
