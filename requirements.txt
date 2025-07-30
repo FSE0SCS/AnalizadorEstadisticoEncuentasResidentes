@@ -1,0 +1,16 @@
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+scikit-learn
+nltk
+spacy
+textblob
+python-docx
+google-generativeai
+openai
+anthropic
+transformers
+Pillow
+sqlite3 # Generalmente incluido en Python, pero bueno listarlo por claridad
