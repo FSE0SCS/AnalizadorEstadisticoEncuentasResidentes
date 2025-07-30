@@ -13,4 +13,3 @@ openai
 anthropic
 transformers
 Pillow
-sqlite3 # Generalmente incluido en Python, pero bueno listarlo por claridad
