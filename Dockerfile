@@ -19,25 +19,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     libblas-dev \
     liblapack-dev \
-    # Ya no necesitamos wget aquí, pero lo mantendremos por si acaso en futuras necesidades
-    # wget \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Instala las dependencias de Python (incluyendo spacy==3.4.4)
-RUN pip install --no-cache-dir -r requirements.txt
+# Instala las dependencias de Python, especificando el índice extra para PyTorch
+# Esto es CRUCIAL para que pip encuentre las versiones +cpu de torch
+RUN pip install --no-cache-dir -r requirements.txt -f https://download.pytorch.org/whl/torch_stable.html
 
 # Descarga los datos de NLTK durante la construcción de la imagen
 # Esto asegura que estén disponibles y no se descarguen en cada arranque
 ENV NLTK_DATA /app/nltk_data
 RUN python -c "import nltk; nltk.download('stopwords', download_dir='/app/nltk_data'); nltk.download('punkt', download_dir='/app/nltk_data')"
 
-# --- INSTALACIÓN DIRECTA DEL MODELO DE SPACY DESDE LA URL (NUEVO ENFOQUE) ---
-# Pip puede instalar directamente desde una URL de un archivo .whl
+# INSTALACIÓN DIRECTA DEL MODELO DE SPACY DESDE LA URL
 RUN pip install https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.4.0/es_core_news_sm-3.4.0-py3-none-any.whl
-
-# La línea `spacy link` no es estrictamente necesaria si se instala el .whl directamente
-# y spaCy lo reconoce automáticamente. Si la aplicación no carga el modelo, la reintroduciremos.
-# RUN python -m spacy link es_core_news_sm es_core_news_sm --force
 
 # Copia el resto de los archivos de tu aplicación al contenedor
 COPY . .
