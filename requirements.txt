@@ -5,7 +5,7 @@ matplotlib
 seaborn
 scikit-learn
 nltk
-spacy
+spacy==3.4.4
 textblob
 python-docx
 google-generativeai
