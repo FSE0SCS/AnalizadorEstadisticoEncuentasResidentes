@@ -31,15 +31,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 ENV NLTK_DATA /app/nltk_data
 RUN python -c "import nltk; nltk.download('stopwords', download_dir='/app/nltk_data'); nltk.download('punkt', download_dir='/app/nltk_data')"
 
-# --- INSTALACIÓN ROBUSTA DEL MODELO DE SPACY ---
+# --- INSTALACIÓN ULTRA-ROBUSTA DEL MODELO DE SPACY ---
 # Descarga el archivo .whl del modelo es_core_news_sm compatible con spaCy 3.4.x
-RUN wget https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.4.0/es_core_news_sm-3.4.0-py3-none-any.whl -O es_core_news_sm-3.4.0.whl
+# Lo descargamos a /tmp para una ubicación limpia y conocida
+RUN wget https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.4.0/es_core_news_sm-3.4.0-py3-none-any.whl -O /tmp/es_core_news_sm-3.4.0.whl
 
-# Instala el modelo desde el archivo .whl descargado
-RUN pip install es_core_news_sm-3.4.0.whl
+# Instala el modelo desde el archivo .whl descargado, usando la ruta completa y explícita
+# Esto le dice a pip que es un archivo local y no un nombre de paquete
+RUN pip install /tmp/es_core_news_sm-3.4.0.whl
 
-# Crea el enlace simbólico para que spaCy lo encuentre al cargar
-RUN python -m spacy link es_core_news_sm es_core_news_sm --force
+# La línea `spacy link` no es estrictamente necesaria si se instala el .whl directamente
+# y spaCy lo reconoce automáticamente. Si la aplicación no carga el modelo, la reintroduciremos.
+# RUN python -m spacy link es_core_news_sm es_core_news_sm --force
 
 # Copia el resto de los archivos de tu aplicación al contenedor
 COPY . .
