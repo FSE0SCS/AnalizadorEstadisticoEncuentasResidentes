@@ -13,4 +13,4 @@ openai
 anthropic
 transformers
 Pillow
-torch
+torch==2.3.1+cpu
