@@ -12,18 +12,18 @@ COPY prompt_data.db .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Instala las dependencias del sistema necesarias para compilar ciertas librerías (como thinc/spaCy)
+# y 'wget' para descargar el modelo de spaCy
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     build-essential \
     python3-dev \
-    # Añadir librerías adicionales que a veces son necesarias para SpaCy/numpy/scipy
-    # libblas-dev y liblapack-dev son comunes para problemas de BLAS/LAPACK
     libblas-dev \
     liblapack-dev \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Instala las dependencias de Python
+# Instala las dependencias de Python (incluyendo spacy==3.4.4)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Descarga los datos de NLTK durante la construcción de la imagen
@@ -31,9 +31,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 ENV NLTK_DATA /app/nltk_data
 RUN python -c "import nltk; nltk.download('stopwords', download_dir='/app/nltk_data'); nltk.download('punkt', download_dir='/app/nltk_data')"
 
-# Descarga el modelo de spaCy *después* de que spaCy mismo haya sido instalado.
-# Esto es crucial para que el modelo sea compatible con la versión de spaCy instalada.
-RUN python -m spacy download es_core_news_sm
+# --- INSTALACIÓN ROBUSTA DEL MODELO DE SPACY ---
+# Descarga el archivo .whl del modelo es_core_news_sm compatible con spaCy 3.4.x
+RUN wget https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.4.0/es_core_news_sm-3.4.0-py3-none-any.whl -O es_core_news_sm-3.4.0.whl
+
+# Instala el modelo desde el archivo .whl descargado
+RUN pip install es_core_news_sm-3.4.0.whl
+
+# Crea el enlace simbólico para que spaCy lo encuentre al cargar
+RUN python -m spacy link es_core_news_sm es_core_news_sm --force
 
 # Copia el resto de los archivos de tu aplicación al contenedor
 COPY . .
