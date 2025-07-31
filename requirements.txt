@@ -13,3 +13,4 @@ openai
 anthropic
 transformers
 Pillow
+torch
