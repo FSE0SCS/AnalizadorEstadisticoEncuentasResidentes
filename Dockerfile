@@ -12,12 +12,15 @@ COPY prompt_data.db .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Instala las dependencias del sistema necesarias para compilar ciertas librerías (como thinc/spaCy)
-# Descomentado para asegurar la presencia de herramientas de compilación
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     build-essential \
     python3-dev \
+    # Añadir librerías adicionales que a veces son necesarias para SpaCy/numpy/scipy
+    # libblas-dev y liblapack-dev son comunes para problemas de BLAS/LAPACK
+    libblas-dev \
+    liblapack-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Instala las dependencias de Python
@@ -28,9 +31,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 ENV NLTK_DATA /app/nltk_data
 RUN python -c "import nltk; nltk.download('stopwords', download_dir='/app/nltk_data'); nltk.download('punkt', download_dir='/app/nltk_data')"
 
-# Descarga el modelo de spaCy.
-# 'es_core_news_sm' ya está en requirements.txt, por lo que pip lo instalará.
-# No es necesario un comando `spacy download` adicional si pip lo maneja.
+# Descarga el modelo de spaCy *después* de que spaCy mismo haya sido instalado.
+# Esto es crucial para que el modelo sea compatible con la versión de spaCy instalada.
+RUN python -m spacy download es_core_news_sm
 
 # Copia el resto de los archivos de tu aplicación al contenedor
 COPY . .
