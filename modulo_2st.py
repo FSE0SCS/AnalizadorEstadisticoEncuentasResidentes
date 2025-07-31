@@ -15,10 +15,10 @@ from docx.shared import Inches
 import io
 import matplotlib.pyplot as plt
 import seaborn as sns
-import google.generativeai as genai
-import openai
-import anthropic
-# from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification # <--- COMENTAR ESTA LÍNEA
+# import google.generativeai as genai # Comentado: No se usará Gemini por ahora
+# import openai # Comentado: No se usará OpenAI por ahora
+# import anthropic # Comentado: No se usará Anthropic por ahora
+# from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification # RoBERTa desactivado temporalmente
 import streamlit as st
 from datetime import datetime
 import re
@@ -64,21 +64,8 @@ def load_spacy_model():
 download_nltk_resources()
 nlp_es = load_spacy_model()
 
-# Cargar el modelo de sentimiento RoBERTa para español
-# @st.cache_resource # <--- COMENTAR ESTA LÍNEA
-# def load_roberta_sentiment_model(): # <--- COMENTAR ESTA LÍNEA
-#     try: # <--- COMENTAR ESTA LÍNEA
-#         from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification # <--- DESCOMENTAR SI SE REACTIVA
-#         tokenizer = AutoTokenizer.from_pretrained("dccuchile/bert-base-spanish-wwm-cased") # <--- COMENTAR ESTA LÍNEA
-#         model = AutoModelForSequenceClassification.from_pretrained("dccuchile/bert-base-spanish-wwm-cased") # <--- COMENTAR ESTA LÍNEA
-#         sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer) # <--- COMENTAR ESTA LÍNEA
-#         st.success("Modelo RoBERTa para análisis de sentimiento cargado.") # <--- COMENTAR ESTA LÍNEA
-#         return sentiment_pipeline # <--- COMENTAR ESTA LÍNEA
-#     except Exception as e: # <--- COMENTAR ESTA LÍNEA
-#         st.error(f"Error al cargar el modelo RoBERTa para sentimiento: {e}. El análisis de sentimiento avanzado no estará disponible.") # <--- COMENTAR ESTA LÍNEA
-#         return None # <--- COMENTAR ESTA LÍNEA
-
-sentiment_roberta_pipeline = None # <--- CAMBIAR A NONE PARA DESACTIVAR
+# RoBERTa desactivado temporalmente
+sentiment_roberta_pipeline = None
 
 # --- Funciones Auxiliares (adaptadas para Streamlit) ---
 
@@ -210,7 +197,7 @@ def perform_sentiment_analysis(df, text_columns):
         
         # RoBERTa (solo si el pipeline está cargado)
         roberta_sentiments = []
-        if sentiment_roberta_pipeline: # <--- SOLO SE EJECUTA SI EL PIPELINE NO ES NONE
+        if sentiment_roberta_pipeline:
             _log_message_streamlit(f"Aplicando modelo RoBERTa para sentimiento en '{col}'...", "info")
             batch_size = 32
             for i in range(0, len(texts), batch_size):
@@ -319,42 +306,43 @@ def perform_topic_modeling(df, text_columns, num_topics=5, method='NMF', use_lem
 
 # --- Interacción con APIs de IA ---
 
-# Inicialización de clientes de IA (usando st.secrets para las claves)
-@st.cache_resource
-def setup_gemini():
-    api_key = st.secrets.get("GEMINI_API_KEY")
-    if api_key:
-        genai.configure(api_key=api_key)
-        _log_message_streamlit("Google Gemini configurado.", "info")
-        return genai.GenerativeModel('gemini-pro')
-    else:
-        _log_message_streamlit("Clave API de Gemini no encontrada en st.secrets.", "warning")
-        return None
+# Inicialización de clientes de IA (usando os.getenv para las claves)
+# @st.cache_resource # Comentado: No se usará Gemini por ahora
+# def setup_gemini():
+#     api_key = os.getenv("GEMINI_API_KEY")
+#     if api_key and api_key.strip():
+#         genai.configure(api_key=api_key)
+#         _log_message_streamlit("Google Gemini configurado.", "info")
+#         return genai.GenerativeModel('gemini-pro')
+#     else:
+#         _log_message_streamlit("Clave API de Gemini no encontrada o vacía en variables de entorno.", "warning")
+#         return None
 
-@st.cache_resource
-def setup_openai():
-    api_key = st.secrets.get("OPENAI_API_KEY")
-    if api_key:
-        openai.api_key = api_key
-        _log_message_streamlit("OpenAI configurado.", "info")
-        return openai.OpenAI(api_key=api_key)
-    else:
-        _log_message_streamlit("Clave API de OpenAI no encontrada en st.secrets.", "warning")
-        return None
+# @st.cache_resource # Comentado: No se usará OpenAI por ahora
+# def setup_openai():
+#     api_key = os.getenv("OPENAI_API_KEY")
+#     if api_key and api_key.strip():
+#         openai.api_key = api_key
+#         _log_message_streamlit("OpenAI configurado.", "info")
+#         return openai.OpenAI(api_key=api_key)
+#     else:
+#         _log_message_streamlit("Clave API de OpenAI no encontrada o vacía en variables de entorno.", "warning")
+#         return None
 
-@st.cache_resource
-def setup_anthropic():
-    api_key = st.secrets.get("ANTHROPIC_API_KEY")
-    if api_key:
-        _log_message_streamlit("Anthropic Claude configurado.", "info")
-        return anthropic.Anthropic(api_key=api_key)
-    else:
-        _log_message_streamlit("Clave API de Anthropic no encontrada en st.secrets.", "warning")
-        return None
+# @st.cache_resource # Comentado: No se usará Anthropic por ahora
+# def setup_anthropic():
+#     api_key = os.getenv("ANTHROPIC_API_KEY")
+#     if api_key and api_key.strip():
+#         _log_message_streamlit("Anthropic Claude configurado.", "info")
+#         return anthropic.Anthropic(api_key=api_key)
+#     else:
+#         _log_message_streamlit("Clave API de Anthropic no encontrada o vacía en variables de entorno.", "warning")
+#         return None
 
-gemini_model = setup_gemini()
-openai_client = setup_openai()
-anthropic_client = setup_anthropic()
+# Las llamadas a setup_ai() se hacen aquí, pero ahora usan os.getenv()
+gemini_model = None # Se establece a None ya que la función setup_gemini está comentada
+openai_client = None # Se establece a None ya que la función setup_openai está comentada
+anthropic_client = None # Se establece a None ya que la función setup_anthropic está comentada
 
 
 def interact_with_ai(model_choice, text_to_analyze, prompt, max_tokens=150):
@@ -366,6 +354,7 @@ def interact_with_ai(model_choice, text_to_analyze, prompt, max_tokens=150):
     response_content = ""
 
     try:
+        # Los modelos de IA de pago ahora están deshabilitados, por lo que estas condiciones siempre serán falsas
         if model_choice == "Google Gemini" and gemini_model:
             response = gemini_model.generate_content(full_prompt)
             response_content = response.text
@@ -384,8 +373,9 @@ def interact_with_ai(model_choice, text_to_analyze, prompt, max_tokens=150):
             )
             response_content = response.content[0].text
         else:
-            _log_message_streamlit(f"Modelo de IA '{model_choice}' no configurado o no soportado.", "warning")
-            return "Error: Modelo de IA no configurado o no soportado."
+            # Mensaje más claro cuando se intenta usar un modelo de IA deshabilitado/no configurado
+            _log_message_streamlit(f"Modelo de IA '{model_choice}' no configurado o deshabilitado.", "warning")
+            return "Error: Modelo de IA no configurado o deshabilitado. Si deseas usarlo, asegúrate de que esté habilitado en el código y sus claves API estén configuradas."
         
         _log_message_streamlit(f"Consulta a {model_choice} completada.", "success")
         return response_content
@@ -468,7 +458,6 @@ def run_qualitative_analysis_streamlit(df_input, text_columns, analysis_options,
             sentiment_text_content += f"**Columna: {col}**\n"
             sentiment_text_content += f"  Polaridad TextBlob (Promedio): {res.get('TextBlob_Polaridad_Promedio', 'N/A'):.2f}\n"
             sentiment_text_content += f"  Subjetividad TextBlob (Promedio): {res.get('TextBlob_Subjetividad_Promedio', 'N/A'):.2f}\n"
-            # Asegurarse de que el valor sea numérico antes de formatear
             roberta_val = res.get('RoBERTa_Sentimiento_Promedio', 'N/A')
             if isinstance(roberta_val, (int, float)):
                 sentiment_text_content += f"  Sentimiento RoBERTa (Promedio): {roberta_val:.2f}\n\n"
@@ -499,6 +488,9 @@ def run_qualitative_analysis_streamlit(df_input, text_columns, analysis_options,
         analysis_results_sequence.append(('text', "Modelado de Temas", topic_text_content))
 
     # === Interacción con IA ===
+    # La interacción con IA solo procederá si ai_model_choice no es None y ai_prompt existe.
+    # Como los modelos de IA de pago están comentados, esta sección solo se activaría si
+    # se reintrodujera un modelo de IA gratuito o se descomentaran los de pago.
     if ai_model_choice and ai_prompt:
         all_text_for_ai = ""
         for col in text_columns:
