@@ -11,6 +11,4 @@ python-docx
 google-generativeai
 openai
 anthropic
-transformers
 Pillow
-torch==2.3.1+cpu

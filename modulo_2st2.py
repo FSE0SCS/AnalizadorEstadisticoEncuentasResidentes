@@ -1,4 +1,5 @@
 # modulo_2st.py
+# Versión optimizada para despliegue en Streamlit Cloud
 
 import pandas as pd
 import numpy as np
@@ -15,10 +16,6 @@ from docx.shared import Inches
 import io
 import matplotlib.pyplot as plt
 import seaborn as sns
-# import google.generativeai as genai # Comentado: No se usará Gemini por ahora
-# import openai # Comentado: No se usará OpenAI por ahora
-# import anthropic # Comentado: No se usará Anthropic por ahora
-# from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification # RoBERTa desactivado temporalmente
 import streamlit as st
 from datetime import datetime
 import re
@@ -54,6 +51,7 @@ def download_nltk_resources():
 @st.cache_resource
 def load_spacy_model():
     try:
+        # --- MODELO LIGERO PARA OPTIMIZAR MEMORIA ---
         nlp_es = spacy.load("es_core_news_sm")
         st.success("Modelo spaCy 'es_core_news_sm' cargado.")
         return nlp_es
@@ -63,9 +61,6 @@ def load_spacy_model():
 
 download_nltk_resources()
 nlp_es = load_spacy_model()
-
-# RoBERTa desactivado temporalmente
-sentiment_roberta_pipeline = None
 
 # --- Funciones Auxiliares (adaptadas para Streamlit) ---
 
@@ -167,87 +162,6 @@ def perform_frequency_analysis(df, text_columns, use_lemmas=False, nlp_model=Non
 
     return results, figures
 
-def perform_sentiment_analysis(df, text_columns):
-    """
-    Realiza análisis de sentimiento usando TextBlob y RoBERTa.
-    Retorna un diccionario de resultados y una lista de figuras de matplotlib.
-    """
-    _log_message_streamlit("Iniciando análisis de sentimiento...", "info")
-    results = {}
-    figures = []
-
-    for col in text_columns:
-        if col not in df.columns:
-            _log_message_streamlit(f"La columna '{col}' no se encuentra en el DataFrame. Saltando.", "warning")
-            continue
-
-        texts = df[col].astype(str).apply(_clean_text).tolist()
-        texts = [text for text in texts if text.strip()]
-
-        if not texts:
-            _log_message_streamlit(f"No hay texto válido en la columna '{col}' para analizar sentimiento.", "warning")
-            continue
-
-        # TextBlob
-        polarities_tb = [TextBlob(text).sentiment.polarity for text in texts]
-        subjectivities_tb = [TextBlob(text).sentiment.subjectivity for text in texts]
-        
-        avg_polarity_tb = np.mean(polarities_tb) if polarities_tb else 0
-        avg_subjectivity_tb = np.mean(subjectivities_tb) if subjectivities_tb else 0
-        
-        # RoBERTa (solo si el pipeline está cargado)
-        roberta_sentiments = []
-        if sentiment_roberta_pipeline:
-            _log_message_streamlit(f"Aplicando modelo RoBERTa para sentimiento en '{col}'...", "info")
-            batch_size = 32
-            for i in range(0, len(texts), batch_size):
-                batch_texts = texts[i:i+batch_size]
-                roberta_sentiments.extend(sentiment_roberta_pipeline(batch_texts))
-            
-            roberta_sentiment_scores = []
-            for res in roberta_sentiments:
-                label = res['label']
-                if label == 'POS' or label == 'LABEL_2': roberta_sentiment_scores.append(res['score'])
-                elif label == 'NEG' or label == 'LABEL_0': roberta_sentiment_scores.append(-res['score'])
-                else: roberta_sentiment_scores.append(0)
-
-        avg_roberta_sentiment = np.mean(roberta_sentiment_scores) if roberta_sentiment_scores else 0
-
-        sentiment_summary = {
-            "TextBlob_Polaridad_Promedio": avg_polarity_tb,
-            "TextBlob_Subjetividad_Promedio": avg_subjectivity_tb,
-            "RoBERTa_Sentimiento_Promedio": avg_roberta_sentiment if sentiment_roberta_pipeline else "N/A (Modelo no cargado)"
-        }
-        results[col] = sentiment_summary
-        _log_message_streamlit(f"Análisis de sentimiento para '{col}' completado.", "success")
-
-        fig_tb, ax_tb = plt.subplots(figsize=(8, 5))
-        sns.histplot(polarities_tb, kde=True, ax=ax_tb, bins=20, color='skyblue')
-        ax_tb.set_title(f"Distribución de Polaridad (TextBlob) en '{col}'")
-        ax_tb.set_xlabel("Polaridad (-1 a 1)")
-        ax_tb.set_ylabel("Frecuencia")
-        figures.append((f"{col}_polaridad_textblob", fig_tb))
-        plt.close(fig_tb)
-        
-        fig_sub_tb, ax_sub_tb = plt.subplots(figsize=(8, 5))
-        sns.histplot(subjectivities_tb, kde=True, ax=ax_sub_tb, bins=20, color='lightgreen')
-        ax_sub_tb.set_title(f"Distribución de Subjetividad (TextBlob) en '{col}'")
-        ax_sub_tb.set_xlabel("Subjetividad (0 a 1)")
-        ax_sub_tb.set_ylabel("Frecuencia")
-        figures.append((f"{col}_subjetividad_textblob", fig_sub_tb))
-        plt.close(fig_sub_tb)
-
-        if sentiment_roberta_pipeline and roberta_sentiment_scores:
-            fig_roberta, ax_roberta = plt.subplots(figsize=(8, 5))
-            sns.histplot(roberta_sentiment_scores, kde=True, ax=ax_roberta, bins=20, color='coral')
-            ax_roberta.set_title(f"Distribución de Sentimiento (RoBERTa) en '{col}'")
-            ax_roberta.set_xlabel("Sentimiento (-1 a 1)")
-            ax_roberta.set_ylabel("Frecuencia")
-            figures.append((f"{col}_sentimiento_roberta", fig_roberta))
-            plt.close(fig_roberta)
-
-    return results, figures
-
 def perform_topic_modeling(df, text_columns, num_topics=5, method='NMF', use_lemmas=False, nlp_model=None):
     """
     Realiza modelado de temas (NMF o LDA).
@@ -304,85 +218,15 @@ def perform_topic_modeling(df, text_columns, num_topics=5, method='NMF', use_lem
 
     return results, figures
 
-# --- Interacción con APIs de IA ---
-
-# Inicialización de clientes de IA (usando os.getenv para las claves)
-# @st.cache_resource # Comentado: No se usará Gemini por ahora
-# def setup_gemini():
-#     api_key = os.getenv("GEMINI_API_KEY")
-#     if api_key and api_key.strip():
-#         genai.configure(api_key=api_key)
-#         _log_message_streamlit("Google Gemini configurado.", "info")
-#         return genai.GenerativeModel('gemini-pro')
-#     else:
-#         _log_message_streamlit("Clave API de Gemini no encontrada o vacía en variables de entorno.", "warning")
-#         return None
-
-# @st.cache_resource # Comentado: No se usará OpenAI por ahora
-# def setup_openai():
-#     api_key = os.getenv("OPENAI_API_KEY")
-#     if api_key and api_key.strip():
-#         openai.api_key = api_key
-#         _log_message_streamlit("OpenAI configurado.", "info")
-#         return openai.OpenAI(api_key=api_key)
-#     else:
-#         _log_message_streamlit("Clave API de OpenAI no encontrada o vacía en variables de entorno.", "warning")
-#         return None
-
-# @st.cache_resource # Comentado: No se usará Anthropic por ahora
-# def setup_anthropic():
-#     api_key = os.getenv("ANTHROPIC_API_KEY")
-#     if api_key and api_key.strip():
-#         _log_message_streamlit("Anthropic Claude configurado.", "info")
-#         return anthropic.Anthropic(api_key=api_key)
-#     else:
-#         _log_message_streamlit("Clave API de Anthropic no encontrada o vacía en variables de entorno.", "warning")
-#         return None
-
-# Las llamadas a setup_ai() se hacen aquí, pero ahora usan os.getenv()
-gemini_model = None # Se establece a None ya que la función setup_gemini está comentada
-openai_client = None # Se establece a None ya que la función setup_openai está comentada
-anthropic_client = None # Se establece a None ya que la función setup_anthropic está comentada
-
+# --- Interacción con APIs de IA (Desactivada) ---
 
 def interact_with_ai(model_choice, text_to_analyze, prompt, max_tokens=150):
     """
-    Interactúa con la API de IA seleccionada.
+    Función de interacción con IA. Desactivada por defecto.
     """
-    _log_message_streamlit(f"Consultando IA ({model_choice})...", "info")
-    full_prompt = f"Basado en el siguiente texto: \"{text_to_analyze}\"\n\n{prompt}"
-    response_content = ""
+    _log_message_streamlit("La funcionalidad de IA está desactivada en esta versión.", "info")
+    return "Funcionalidad de IA desactivada."
 
-    try:
-        # Los modelos de IA de pago ahora están deshabilitados, por lo que estas condiciones siempre serán falsas
-        if model_choice == "Google Gemini" and gemini_model:
-            response = gemini_model.generate_content(full_prompt)
-            response_content = response.text
-        elif model_choice == "OpenAI GPT" and openai_client:
-            response = openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": full_prompt}],
-                max_tokens=max_tokens
-            )
-            response_content = response.choices[0].message.content
-        elif model_choice == "Anthropic Claude" and anthropic_client:
-            response = anthropic_client.messages.create(
-                model="claude-3-opus-20240229",
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": full_prompt}],
-            )
-            response_content = response.content[0].text
-        else:
-            # Mensaje más claro cuando se intenta usar un modelo de IA deshabilitado/no configurado
-            _log_message_streamlit(f"Modelo de IA '{model_choice}' no configurado o deshabilitado.", "warning")
-            return "Error: Modelo de IA no configurado o deshabilitado. Si deseas usarlo, asegúrate de que esté habilitado en el código y sus claves API estén configuradas."
-        
-        _log_message_streamlit(f"Consulta a {model_choice} completada.", "success")
-        return response_content
-
-    except Exception as e:
-        _log_message_streamlit(f"Error al interactuar con {model_choice}: {e}", "error")
-        return f"Error al interactuar con la IA: {e}"
 
 # --- Exportación a Word ---
 
@@ -449,30 +293,6 @@ def run_qualitative_analysis_streamlit(df_input, text_columns, analysis_options,
             analysis_results_sequence.append(('image_bytes', f"Gráfico de Frecuencia ({col_name})", buf))
             plt.close(fig)
 
-    # === Análisis de Sentimiento ===
-    if analysis_options.get('sentiment', False):
-        sentiment_results, sentiment_figures = perform_sentiment_analysis(df_input, text_columns)
-        
-        sentiment_text_content = "Resultados del análisis de sentimiento para las columnas seleccionadas:\n\n"
-        for col, res in sentiment_results.items():
-            sentiment_text_content += f"**Columna: {col}**\n"
-            sentiment_text_content += f"  Polaridad TextBlob (Promedio): {res.get('TextBlob_Polaridad_Promedio', 'N/A'):.2f}\n"
-            sentiment_text_content += f"  Subjetividad TextBlob (Promedio): {res.get('TextBlob_Subjetividad_Promedio', 'N/A'):.2f}\n"
-            roberta_val = res.get('RoBERTa_Sentimiento_Promedio', 'N/A')
-            if isinstance(roberta_val, (int, float)):
-                sentiment_text_content += f"  Sentimiento RoBERTa (Promedio): {roberta_val:.2f}\n\n"
-            else:
-                sentiment_text_content += f"  Sentimiento RoBERTa (Promedio): {roberta_val}\n\n"
-
-        analysis_results_sequence.append(('text', "Análisis de Sentimiento", sentiment_text_content))
-        
-        for col_name, fig in sentiment_figures:
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", bbox_inches="tight", dpi=200)
-            buf.seek(0)
-            analysis_results_sequence.append(('image_bytes', f"Gráfico de Sentimiento ({col_name})", buf))
-            plt.close(fig)
-
     # === Modelado de Temas ===
     if analysis_options.get('topic_modeling', False):
         num_topics = analysis_options.get('num_topics', 5)
@@ -486,29 +306,6 @@ def run_qualitative_analysis_streamlit(df_input, text_columns, analysis_options,
                 topic_text_content += f"- {topic_str}\n"
             topic_text_content += "\n"
         analysis_results_sequence.append(('text', "Modelado de Temas", topic_text_content))
-
-    # === Interacción con IA ===
-    # La interacción con IA solo procederá si ai_model_choice no es None y ai_prompt existe.
-    # Como los modelos de IA de pago están comentados, esta sección solo se activaría si
-    # se reintrodujera un modelo de IA gratuito o se descomentaran los de pago.
-    if ai_model_choice and ai_prompt:
-        all_text_for_ai = ""
-        for col in text_columns:
-            if col in df_input.columns:
-                all_text_for_ai += " ".join(df_input[col].astype(str).dropna().tolist()) + " "
-        
-        all_text_for_ai = _clean_text(all_text_for_ai)
-
-        if all_text_for_ai:
-            _log_message_streamlit(f"Enviando {len(all_text_for_ai)} caracteres de texto a {ai_model_choice}...", "info")
-            if len(all_text_for_ai) > 10000:
-                _log_message_streamlit("Texto de entrada a la IA es muy largo, se truncará a 10,000 caracteres.", "warning")
-                all_text_for_ai = all_text_for_ai[:10000]
-
-            ai_response = interact_with_ai(ai_model_choice, all_text_for_ai, ai_prompt)
-            analysis_results_sequence.append(('text', f"Respuesta de IA ({ai_model_choice})", f"**Prompt utilizado:**\n{ai_prompt}\n\n**Respuesta de la IA:**\n{ai_response}"))
-        else:
-            _log_message_streamlit("No hay texto suficiente en las columnas seleccionadas para enviar a la IA.", "warning")
 
     word_doc_bytes = export_qualitative_results_to_word(analysis_results_sequence)
     _log_message_streamlit("✅ Análisis cualitativo completado.", "success")

@@ -8,7 +8,7 @@ from datetime import datetime
 # Importar los módulos refactorizados
 import modulo_0st as m0
 import modulo_1st as m1
-import modulo_2st as m2
+import modulo_2st2 as m2
 import modulo_3st as m3
 import prompt_creator_app_st as prompt_creator
 
