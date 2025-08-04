@@ -31,7 +31,7 @@ def check_password():
         st.session_state["password_correct"] = False
 
     if not st.session_state["password_correct"]:
-        st.sidebar.empty()
+        st.sidebar.empty() # Limpiar contenido de la barra lateral antes de iniciar sesión
         st.title("Acceso Requerido")
         st.write("Por favor, introduce la contraseña para acceder a la aplicación.")
         
@@ -42,231 +42,227 @@ def check_password():
                 st.session_state["password_correct"] = True
                 st.rerun()
             else:
-                st.error("😕 Contraseña incorrecta. Inténtalo de nuevo.")
-        return False
-    return True
+                st.error("Contraseña incorrecta. Por favor, inténtalo de nuevo.")
+        
+        return st.session_state["password_correct"]
 
 # --- Lógica principal de la aplicación ---
 if check_password():
-    st.sidebar.title(APP_TITLE)
-    st.sidebar.subheader(f"Versión {APP_VERSION}")
+    
+    # --- Barra Lateral ---
+    st.sidebar.title("🛠️ Opciones")
+    st.sidebar.markdown(f"**{APP_TITLE}** v{APP_VERSION}")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "Carga de Datos", 
-        "Análisis Cuantitativo", 
-        "Análisis Cualitativo", 
-        "Análisis de Comparación", 
-        "Creador de Prompts IA"
-    ])
+    # Selección de módulo
+    module_choice = st.sidebar.radio(
+        "Elige un módulo:",
+        ["1. Carga y Procesamiento", "2. Análisis Descriptivo", "3. Análisis de Texto", "4. Análisis Comparativo", "5. Creador de Prompts"],
+        index=0 # Inicia en el primer módulo
+    )
+    st.sidebar.markdown("---")
 
-    with tab1:
-        st.header("1️⃣ Carga y Procesamiento de Archivos")
-        st.markdown("Carga uno o más archivos de Excel (`.xlsx`) para comenzar el análisis.")
+    if module_choice == "1. Carga y Procesamiento":
+        st.title("Módulo 1: Carga y Procesamiento de Datos")
+        st.write("Sube uno o varios archivos de Excel para consolidarlos en un único DataFrame para su análisis.")
+        
         uploaded_files = st.file_uploader(
-            "Arrastra y suelta tus archivos aquí (o haz clic para buscar)", 
-            type=["xlsx"], 
+            "Selecciona archivos de Excel",
+            type=['xlsx', 'xls'],
             accept_multiple_files=True
         )
         
         if uploaded_files:
-            # Botón para iniciar el procesamiento, evitando la ejecución automática
-            if st.button("Procesar Archivos"):
-                # Inicializar el estado de la sesión si es necesario
-                if 'df_global' not in st.session_state:
-                    st.session_state['df_global'] = None
+            if st.button("💾 Procesar y Consolidar Datos"):
+                st.session_state['results_df'], status, message = m0.process_excel_files(uploaded_files)
+                if status == "success":
+                    st.session_state['processing_summary'] = message
+                else:
+                    st.session_state['processing_summary'] = message
 
-                # Muestra un spinner y una barra de progreso mientras se procesan los archivos
-                with st.spinner("Procesando archivos..."):
-                    progress_bar = st.progress(0, text="Iniciando procesamiento...")
-
-                    # Llamada a la función corregida de modulo_0st
-                    df_final, status, message = m0.process_multiple_files(
-                        uploaded_files,
-                        lambda p, msg: progress_bar.progress(p, text=msg),
-                        m0._log_message_streamlit
-                    )
-
-                    if status == "success":
-                        st.session_state['df_global'] = df_final
-                        st.success(message)
-                    else:
-                        st.session_state['df_global'] = None
-                        st.error(message)
+        if 'results_df' in st.session_state and st.session_state['results_df'] is not None:
+            st.subheader("Datos Consolidado:")
+            st.write(st.session_state['results_df'])
             
-            # Muestra la previsualización del DataFrame solo si existe en la sesión
-            if 'df_global' in st.session_state and st.session_state['df_global'] is not None:
-                st.subheader("Vista previa de los datos procesados:")
-                st.dataframe(st.session_state['df_global'].head())
-                st.info(f"Datos cargados exitosamente. Total de filas: {len(st.session_state['df_global'])}.")
-    
-    if 'df_global' in st.session_state and st.session_state['df_global'] is not None:
+            # Botón de descarga
+            excel_data = io.BytesIO()
+            st.session_state['results_df'].to_excel(excel_data, index=False, engine='openpyxl')
+            excel_data.seek(0)
+            st.download_button(
+                label="📥 Descargar Datos Consolidado como Excel",
+                data=excel_data,
+                file_name=f"datos_consolidados_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            if 'processing_summary' in st.session_state:
+                st.markdown("---")
+                st.subheader("Resumen del Procesamiento:")
+                st.info(st.session_state['processing_summary'])
+
+    elif module_choice == "2. Análisis Descriptivo":
+        st.title("Módulo 2: Análisis Descriptivo Cuantitativo")
+        st.write("Selecciona una o más columnas para realizar un análisis descriptivo y generar gráficos.")
         
-        with tab2:
-            st.header("2️⃣ Análisis Cuantitativo")
-            st.markdown("Realiza un análisis estadístico de las columnas numéricas y de selección múltiple.")
+        if 'results_df' in st.session_state and st.session_state['results_df'] is not None:
+            df = st.session_state['results_df']
             
-            numeric_cols = st.session_state['df_global'].select_dtypes(include=np.number).columns.tolist()
-            categorical_cols = [col for col in st.session_state['df_global'].columns if col not in numeric_cols and st.session_state['df_global'][col].nunique() < 20]
+            numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+            text_cols = df.select_dtypes(include='object').columns.tolist()
             
-            all_cols_analysis = sorted(numeric_cols + categorical_cols)
+            analysis_type = st.radio("Tipo de Análisis", ["Cuantitativo", "Frecuencia"], horizontal=True)
             
-            if not all_cols_analysis:
-                st.warning("No se encontraron columnas adecuadas para el análisis cuantitativo. Por favor, revisa tus datos.")
-            else:
-                selected_cols = st.multiselect("Selecciona las columnas para el análisis:", all_cols_analysis, key="cuanti_cols")
-                
-                analysis_type = st.radio("Tipo de Análisis para columnas de texto/selección:", 
-                                        ["Análisis de Frecuencia"], 
-                                        key="cuanti_type", horizontal=True)
-                
-                graph_style = st.selectbox("Estilo de Gráfico:", 
-                                        ["Barras", "Circular", "Histograma"], 
-                                        key="cuanti_graph")
-                                        
-                if st.button("Ejecutar Análisis Cuantitativo", key="run_cuanti_button") and selected_cols:
-                    results_sequence = m1.perform_quantitative_analysis(st.session_state['df_global'], selected_cols, analysis_type, graph_style, st)
+            if analysis_type == "Cuantitativo":
+                selected_cols = st.multiselect("Selecciona columnas numéricas:", numeric_cols)
+                graph_style = st.selectbox("Estilo de Gráfico:", ["Histograma", "Gráfico de Caja (Boxplot)"])
+                if selected_cols and st.button("📊 Generar Análisis"):
+                    if 'analysis_results' not in st.session_state:
+                        st.session_state['analysis_results'] = []
                     
-                    st.session_state['quantitative_results'] = results_sequence
+                    st.session_state['analysis_results'] = m1.perform_quantitative_analysis(df, selected_cols, graph_style)
+
+            else: # Frecuencia
+                selected_cols = st.multiselect("Selecciona columnas para el análisis de frecuencia:", text_cols)
+                if selected_cols and st.button("📊 Generar Análisis de Frecuencia"):
+                    if 'analysis_results' not in st.session_state:
+                        st.session_state['analysis_results'] = []
+                    
+                    st.session_state['analysis_results'] = m1.perform_frequency_analysis(df, selected_cols)
             
-            if 'quantitative_results' in st.session_state and st.session_state['quantitative_results']:
+            if 'analysis_results' in st.session_state and st.session_state['analysis_results']:
+                st.markdown("---")
                 st.subheader("Resultados del Análisis:")
-                for item_type, item_title, item_content in st.session_state['quantitative_results']:
+                
+                # Mostrar los resultados secuencialmente
+                for item_type, title, content in st.session_state['analysis_results']:
                     if item_type == 'text':
-                        st.markdown(item_content)
+                        st.text(content)
                     elif item_type == 'image_bytes':
-                        st.image(item_content, caption=item_title)
-            
-                doc_bytes = m1.export_to_word(st.session_state['quantitative_results'])
+                        st.image(content, caption=title)
+                
+                # Exportar a Word
+                word_doc_bytes = m1.export_analysis_to_word(st.session_state['analysis_results'])
                 st.download_button(
-                    label="📥 Descargar Documento (Word)",
-                    data=doc_bytes,
-                    file_name=f"Analisis_Cuantitativo_{datetime.now().strftime('%Y%m%d')}.docx",
+                    label="📥 Descargar Informe en Word",
+                    data=word_doc_bytes,
+                    file_name=f"informe_descriptivo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
 
-        with tab3:
-            st.header("3️⃣ Análisis Cualitativo y de Texto")
-            st.markdown("Realiza un análisis de texto en las columnas con respuestas abiertas.")
-
-            text_columns = st.session_state['df_global'].select_dtypes(include=['object']).columns.tolist()
-            text_columns_filtered = [col for col in text_columns if st.session_state['df_global'][col].nunique() > 20]
+        else:
+            st.warning("Por favor, carga y procesa los datos en el 'Módulo 1' primero.")
             
-            if not text_columns_filtered:
-                st.warning("No se encontraron columnas de texto adecuadas (con más de 20 valores únicos) para el análisis. Por favor, revisa tus datos.")
-            else:
-                selected_text_cols = st.multiselect("Selecciona las columnas de texto para el análisis:", text_columns_filtered, key="cualitativo_cols")
-                
-                analysis_options = {
-                    "word_freq": st.checkbox("Análisis de Frecuencia de Palabras y N-gramas", value=True),
-                    "sentiment_analysis": st.checkbox("Análisis de Sentimiento (deshabilitado)", value=False, disabled=True),
-                    "topic_modeling": st.checkbox("Modelado de Temas (NMF o LDA)", value=True)
-                }
-                
-                if analysis_options.get('topic_modeling'):
-                    topic_method = st.radio("Método de modelado de temas:", ["NMF", "LDA"], horizontal=True)
-                    num_topics = st.slider("Número de temas a extraer:", 2, 10, 5)
-                    analysis_options['num_topics'] = num_topics
-                    analysis_options['topic_method'] = topic_method
-                
-                st.subheader("Interacción con IA (opcional)")
-                ai_model_choice = st.selectbox(
-                    "Selecciona el modelo de IA:",
-                    ["Ninguno", "Gemini Pro", "GPT-3.5", "Claude 3 Sonnet"],
-                    index=0,
-                    disabled=True,
-                    help="Modelos de IA deshabilitados temporalmente para evitar costos."
-                )
-                ai_prompt = st.text_area(
-                    "Introduce el prompt para la IA (ej. 'Resume los puntos principales'):",
-                    height=100,
-                    disabled=ai_model_choice == "Ninguno"
-                )
+    elif module_choice == "3. Análisis de Texto":
+        st.title("Módulo 3: Análisis de Texto")
+        st.write("Analiza y extrae información de columnas de texto.")
+        
+        if 'results_df' in st.session_state and st.session_state['results_df'] is not None:
+            df = st.session_state['results_df']
+            
+            text_columns = df.select_dtypes(include='object').columns.tolist()
+            selected_text_cols = st.multiselect("Selecciona columnas de texto para analizar:", text_columns)
+            
+            analysis_options = {}
+            st.subheader("Opciones de Análisis:")
+            analysis_options['word_frequency'] = st.checkbox("Análisis de Frecuencia de Palabras y N-gramas", value=True)
+            analysis_options['sentiment_analysis'] = st.checkbox("Análisis de Sentimiento", value=True)
+            analysis_options['topic_modeling'] = st.checkbox("Modelado de Temas (NMF)", value=False)
+            if analysis_options['topic_modeling']:
+                analysis_options['num_topics'] = st.slider("Número de Temas", min_value=2, max_value=10, value=5)
+            
+            st.markdown("---")
+            st.subheader("Opciones de IA (Experimental)")
+            enable_ai = st.checkbox("Habilitar Análisis con IA (Gemini)")
+            if enable_ai:
+                ai_model = st.selectbox("Selecciona un modelo de IA:", ["gemini-2.5-flash-preview-05-20"])
+                ai_prompt = st.text_area("Ingresa un prompt para la IA (ej: 'Resume los temas principales de este texto'):")
+                analysis_options['ai_model'] = ai_model
+                analysis_options['ai_prompt'] = ai_prompt
 
-                if st.button("Ejecutar Análisis Cualitativo", key="run_cualitativo_button") and selected_text_cols:
-                    if not any(analysis_options.values()):
-                        st.error("Por favor, selecciona al menos una opción de análisis.")
-                    else:
-                        st.session_state['qualitative_results'] = m2.perform_qualitative_analysis(st.session_state['df_global'], selected_text_cols, analysis_options, ai_model_choice, ai_prompt, st)
-                
-            if 'qualitative_results' in st.session_state and st.session_state['qualitative_results']:
-                st.subheader("Resultados del Análisis:")
-                for item_type, item_title, item_content in st.session_state['qualitative_results']:
+            if selected_text_cols and st.button("🔬 Realizar Análisis de Texto"):
+                with st.spinner("Analizando texto..."):
+                    st.session_state['text_analysis_results'] = m2.perform_text_analysis(df, selected_text_cols, analysis_options)
+            
+            if 'text_analysis_results' in st.session_state and st.session_state['text_analysis_results']:
+                st.markdown("---")
+                st.subheader("Resultados del Análisis de Texto:")
+                for item_type, title, content in st.session_state['text_analysis_results']:
                     if item_type == 'text':
-                        st.markdown(item_content)
+                        st.markdown(content)
                     elif item_type == 'image_bytes':
-                        st.image(item_content, caption=item_title)
-            
-                doc_bytes = m2.export_qualitative_to_word(st.session_state['qualitative_results'])
+                        st.image(content, caption=title)
+                
+                word_doc_bytes = m2.export_analysis_to_word(st.session_state['text_analysis_results'])
                 st.download_button(
-                    label="📥 Descargar Documento (Word)",
-                    data=doc_bytes,
-                    file_name=f"Analisis_Cualitativo_{datetime.now().strftime('%Y%m%d')}.docx",
+                    label="📥 Descargar Informe de Texto en Word",
+                    data=word_doc_bytes,
+                    file_name=f"informe_texto_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
 
-        with tab4:
-            st.header("4️⃣ Análisis de Comparación")
-            st.markdown("Compara las respuestas a una pregunta de encuesta en función de una o más variables de agrupación (ej. 'Edad' o 'Unidad').")
+        else:
+            st.warning("Por favor, carga y procesa los datos en el 'Módulo 1' primero.")
             
-            all_cols = st.session_state['df_global'].columns.tolist()
+    elif module_choice == "4. Análisis Comparativo":
+        st.title("Módulo 4: Análisis Comparativo")
+        st.write("Compara la distribución de una pregunta (variable) en función de un criterio (otra variable).")
+        
+        if 'results_df' in st.session_state and st.session_state['results_df'] is not None:
+            df = st.session_state['results_df']
             
-            if not all_cols:
-                 st.warning("No se encontraron columnas para realizar el análisis de comparación. Por favor, revisa tus datos.")
-            else:
-                crit_col = st.selectbox(
-                    "Selecciona la columna que define los grupos de comparación:",
-                    all_cols,
-                    key="crit_col"
-                )
-                
-                question_cols = [col for col in all_cols if col != crit_col]
-                selected_question_cols = st.multiselect(
-                    "Selecciona las preguntas a analizar por grupo:",
-                    question_cols,
-                    key="question_cols"
-                )
-                
-                if st.button("Ejecutar Comparación", key="run_comparison_button") and crit_col and selected_question_cols:
-                    st.session_state['comparison_results'] = m3.perform_comparison_analysis(st.session_state['df_global'], crit_col, selected_question_cols, st)
+            available_cols = df.columns.tolist()
+            
+            crit_col = st.selectbox("Selecciona la columna de criterio (variable de agrupamiento):", available_cols)
+            
+            st.markdown("---")
+            st.subheader("Preguntas a comparar")
+            question_cols = st.multiselect("Selecciona las preguntas a comparar:", [col for col in available_cols if col != crit_col])
+            
+            if crit_col and question_cols and st.button("📈 Generar Análisis Comparativo"):
+                with st.spinner("Generando análisis comparativo..."):
+                    st.session_state['comparison_results'] = m3.perform_comparison_analysis(df, crit_col, question_cols)
             
             if 'comparison_results' in st.session_state and st.session_state['comparison_results']:
-                st.subheader("Resultados de la Comparación:")
-                for item_type, item_title, item_content in st.session_state['comparison_results']:
+                st.markdown("---")
+                st.subheader("Resultados del Análisis Comparativo:")
+                for item_type, title, content in st.session_state['comparison_results']:
                     if item_type == 'text':
-                        st.markdown(item_content)
+                        st.markdown(content)
                     elif item_type == 'image_bytes':
-                        st.image(item_content, caption=item_title)
-
-                doc_bytes = m3.export_comparison_to_word(st.session_state['comparison_results'], {})
+                        st.image(content, caption=title)
+                
+                word_doc_bytes = m3.export_comparison_to_word(st.session_state['comparison_results'])
                 st.download_button(
-                    label="📥 Descargar Documento (Word)",
-                    data=doc_bytes,
-                    file_name=f"Analisis_Comparacion_{datetime.now().strftime('%Y%m%d')}.docx",
+                    label="📥 Descargar Informe Comparativo en Word",
+                    data=word_doc_bytes,
+                    file_name=f"informe_comparativo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
+        else:
+            st.warning("Por favor, carga y procesa los datos en el 'Módulo 1' primero.")
+            
+    elif module_choice == "5. Creador de Prompts":
+        st.title("Módulo 5: Creador de Prompts para IA")
+        st.write("Utiliza esta herramienta para construir prompts estructurados para modelos de Inteligencia Artificial.")
+
+        verbs = prompt_creator.get_all_verbs()
+        role_categories = prompt_creator.get_role_categories()
+
+        col_verb_standalone, col_cat_standalone = st.columns(2)
+        with col_verb_standalone:
+            selected_verb_standalone = st.selectbox("Verbo de Acción:", verbs, key="prompt_verb_standalone")
+        with col_cat_standalone:
+            selected_category_standalone = st.selectbox("Categoría de Rol:", role_categories, key="prompt_category_standalone")
         
-        with tab5:
-            st.header("5️⃣ Creador de Prompts para IA")
-            st.write("Utiliza esta herramienta para construir prompts estructurados para modelos de Inteligencia Artificial.")
+        roles_standalone = prompt_creator.get_roles_by_category(selected_category_standalone)
+        selected_role_standalone = st.selectbox("Rol Específico:", roles_standalone, key="prompt_role_standalone")
+        
+        additional_context_standalone = st.text_area("Contexto/Instrucciones Adicionales:", key="prompt_context_standalone")
+        
+        generated_prompt_final = prompt_creator.generate_ai_prompt(selected_verb_standalone, selected_role_standalone, additional_context_standalone)
+        
+        st.subheader("Prompt Generado:")
+        st.text_area("Copia este prompt para usarlo en tus interacciones con IA:", value=generated_prompt_final, height=200, key="final_generated_prompt_display")
 
-            verbs = prompt_creator.get_all_verbs()
-            role_categories = prompt_creator.get_role_categories()
+        st.info("Para copiar el prompt, selecciona el texto en el cuadro de arriba y usa Ctrl+C (o Cmd+C en Mac).")
+        st.warning("Esta herramienta es experimental. Siempre revisa y ajusta los prompts generados según tus necesidades.")
 
-            col_verb_standalone, col_cat_standalone = st.columns(2)
-            with col_verb_standalone:
-                selected_verb_standalone = st.selectbox("Verbo de Acción:", verbs, key="prompt_verb_standalone")
-            with col_cat_standalone:
-                selected_category_standalone = st.selectbox("Categoría de Rol:", role_categories, key="prompt_category_standalone")
-            
-            roles_standalone = prompt_creator.get_roles_by_category(selected_category_standalone)
-            selected_role_standalone = st.selectbox("Rol Específico:", roles_standalone, key="prompt_role_standalone")
-            
-            additional_context_standalone = st.text_area("Contexto/Instrucciones Adicionales:", key="prompt_context_standalone")
-            
-            generated_prompt_final = prompt_creator.generate_ai_prompt(selected_verb_standalone, selected_role_standalone, additional_context_standalone)
-            
-            st.subheader("Prompt Generado:")
-            st.text_area("Copia este prompt para usarlo en tus interacciones con IA:", value=generated_prompt_final, height=200, key="final_generated_prompt_display")
-
-            st.info("Para copiar el prompt, selecciona el texto en el cuadro de arriba y usa Ctrl+C (o Cmd+C en Mac).")
-            st.warning("Esta herramienta es experimental. Siempre revisa y ajusta los prompts generados según tus necesidades.")
