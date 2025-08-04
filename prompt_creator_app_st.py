@@ -7,7 +7,7 @@ import os
 # Nombre de la base de datos
 DB_NAME = "prompt_data.db"
 
-# --- NUEVA FUNCIÓN PARA CREAR TABLAS Y DATOS INICIALES ---
+# --- NUEVA FUNCIÓN PARA CREAR TABLAS Y DATOS INICIALES ---\
 def _create_tables_and_populate_data(conn):
     """
     Crea las tablas 'Verbos' y 'Roles' si no existen, y las puebla
@@ -37,9 +37,9 @@ def _create_tables_and_populate_data(conn):
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS Roles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                categoria_rol TEXT NOT NULL,
                 rol TEXT NOT NULL,
-                descripcion TEXT
+                categoria_rol TEXT NOT NULL,
+                UNIQUE(rol, categoria_rol)
             )
         """)
         
@@ -47,21 +47,20 @@ def _create_tables_and_populate_data(conn):
         cursor.execute("SELECT COUNT(*) FROM Roles")
         if cursor.fetchone()[0] == 0:
             roles_ejemplo = [
-                ('Profesional', 'Experto en Marketing Digital', 'Un experto en marketing digital con conocimientos en SEO, SEM y redes sociales.'),
-                ('Profesional', 'Científico de Datos', 'Un científico de datos especializado en análisis estadístico y machine learning.'),
-                ('Creativo', 'Escritor de Novelas', 'Un autor creativo con la capacidad de desarrollar personajes y tramas complejas.'),
-                ('Creativo', 'Guionista de Cine', 'Un guionista con experiencia en la estructura narrativa de películas y series de televisión.'),
-                ('Académico', 'Profesor Universitario', 'Un profesor con conocimiento profundo de su materia y habilidad para explicar conceptos complejos.'),
-                ('Académico', 'Historiador', 'Un historiador con la capacidad de analizar eventos pasados y sus implicaciones.'),
+                ('Científico de Datos', 'Data & Analytics'),
+                ('Analista de Datos', 'Data & Analytics'),
+                ('Ingeniero de Machine Learning', 'Data & Analytics'),
+                ('Desarrollador de Software', 'Desarrollo de Software'),
+                ('Abogado Corporativo', 'Legal'),
+                ('Juez (Simulado)', 'Legal'),
+                ('Analista de Marketing', 'Marketing & Ventas'),
+                ('Profesor Universitario', 'Educación')
             ]
-            cursor.executemany("INSERT INTO Roles (categoria_rol, rol, descripcion) VALUES (?, ?, ?)", roles_ejemplo)
-
+            cursor.executemany("INSERT INTO Roles (rol, categoria_rol) VALUES (?, ?)", roles_ejemplo)
+        
         conn.commit()
-        st.info("Tablas de la base de datos verificadas y pobladas con datos de ejemplo.")
-
     except sqlite3.Error as e:
-        st.error(f"Error al verificar/crear tablas: {e}")
-
+        st.error(f"Error al crear o poblar las tablas: {e}")
 
 # --- Funciones de Conexión y Consulta a la Base de Datos ---
 
@@ -74,7 +73,10 @@ def get_db_connection():
     try:
         conn = sqlite3.connect(DB_NAME)
         conn.row_factory = sqlite3.Row # Para acceder a las columnas por nombre
-        _create_tables_and_populate_data(conn) # Llama a la nueva función aquí
+        
+        # Asegurarse de que las tablas existen y tienen datos
+        _create_tables_and_populate_data(conn)
+        
         st.success(f"Conexión a la base de datos '{DB_NAME}' establecida.")
         return conn
     except sqlite3.Error as e:
