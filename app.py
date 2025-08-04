@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime
+import numpy as np
 
 # Importar los módulos refactorizados
 import modulo_0st as m0
@@ -74,7 +75,8 @@ if check_password():
                 st.session_state['uploaded_files_cache'] = uploaded_files
                 st.session_state['df_global'] = None
                 
-            st.session_state['df_global'] = m0.process_uploaded_files(uploaded_files, st)
+            # CORRECCIÓN: Llamar a la función con el nombre correcto
+            st.session_state['df_global'] = m0.process_uploaded_files_concurrently(uploaded_files, st)
             
             if st.session_state['df_global'] is not None and not st.session_state['df_global'].empty:
                 st.subheader("Vista previa de los datos procesados:")
@@ -258,5 +260,3 @@ if check_password():
 
             st.info("Para copiar el prompt, selecciona el texto en el cuadro de arriba y usa Ctrl+C (o Cmd+C en Mac).")
             st.warning("Esta herramienta es experimental. Siempre revisa y ajusta los prompts generados según tus necesidades.")
-
-
