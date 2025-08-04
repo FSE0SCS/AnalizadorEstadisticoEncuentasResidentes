@@ -31,7 +31,7 @@ def check_password():
         st.session_state["password_correct"] = False
 
     if not st.session_state["password_correct"]:
-        st.sidebar.empty() # Limpiar contenido de la barra lateral antes de iniciar sesión
+        st.sidebar.empty()
         st.title("Acceso Requerido")
         st.write("Por favor, introduce la contraseña para acceder a la aplicación.")
         
@@ -40,19 +40,17 @@ def check_password():
         if st.button("Acceder"):
             if password_input == CORRECT_PASSWORD:
                 st.session_state["password_correct"] = True
-                st.rerun() # Usar st.rerun() en lugar de st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("😕 Contraseña incorrecta. Inténtalo de nuevo.")
         return False
     return True
 
 # --- Lógica principal de la aplicación ---
-# Muestra la aplicación solo si la contraseña es correcta
 if check_password():
     st.sidebar.title(APP_TITLE)
     st.sidebar.subheader(f"Versión {APP_VERSION}")
 
-    # Pestañas de la aplicación
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "Carga de Datos", 
         "Análisis Cuantitativo", 
@@ -71,27 +69,43 @@ if check_password():
         )
         
         if uploaded_files:
-            if 'df_global' not in st.session_state or 'uploaded_files_cache' not in st.session_state or sorted([f.name for f in uploaded_files]) != sorted([f.name for f in st.session_state['uploaded_files_cache']]):
-                st.session_state['uploaded_files_cache'] = uploaded_files
-                st.session_state['df_global'] = None
-                
-            # CORRECCIÓN: Llamar a la función con el nombre correcto
-            st.session_state['df_global'] = m0.process_uploaded_files_concurrently(uploaded_files, st)
+            # Botón para iniciar el procesamiento, evitando la ejecución automática
+            if st.button("Procesar Archivos"):
+                # Inicializar el estado de la sesión si es necesario
+                if 'df_global' not in st.session_state:
+                    st.session_state['df_global'] = None
+
+                # Muestra un spinner y una barra de progreso mientras se procesan los archivos
+                with st.spinner("Procesando archivos..."):
+                    progress_bar = st.progress(0, text="Iniciando procesamiento...")
+
+                    # Llamada a la función corregida de modulo_0st
+                    df_final, status, message = m0.process_multiple_files(
+                        uploaded_files,
+                        lambda p, msg: progress_bar.progress(p, text=msg),
+                        m0._log_message_streamlit
+                    )
+
+                    if status == "success":
+                        st.session_state['df_global'] = df_final
+                        st.success(message)
+                    else:
+                        st.session_state['df_global'] = None
+                        st.error(message)
             
-            if st.session_state['df_global'] is not None and not st.session_state['df_global'].empty:
+            # Muestra la previsualización del DataFrame solo si existe en la sesión
+            if 'df_global' in st.session_state and st.session_state['df_global'] is not None:
                 st.subheader("Vista previa de los datos procesados:")
                 st.dataframe(st.session_state['df_global'].head())
                 st.info(f"Datos cargados exitosamente. Total de filas: {len(st.session_state['df_global'])}.")
-            
+    
     if 'df_global' in st.session_state and st.session_state['df_global'] is not None:
         
         with tab2:
             st.header("2️⃣ Análisis Cuantitativo")
             st.markdown("Realiza un análisis estadístico de las columnas numéricas y de selección múltiple.")
             
-            # Columnas numéricas
             numeric_cols = st.session_state['df_global'].select_dtypes(include=np.number).columns.tolist()
-            # Columnas de selección múltiple (asumimos que tienen menos de 10 valores únicos y no son numéricas continuas)
             categorical_cols = [col for col in st.session_state['df_global'].columns if col not in numeric_cols and st.session_state['df_global'][col].nunique() < 20]
             
             all_cols_analysis = sorted(numeric_cols + categorical_cols)
@@ -122,7 +136,6 @@ if check_password():
                     elif item_type == 'image_bytes':
                         st.image(item_content, caption=item_title)
             
-                # Botón de descarga
                 doc_bytes = m1.export_to_word(st.session_state['quantitative_results'])
                 st.download_button(
                     label="📥 Descargar Documento (Word)",
@@ -135,7 +148,6 @@ if check_password():
             st.header("3️⃣ Análisis Cualitativo y de Texto")
             st.markdown("Realiza un análisis de texto en las columnas con respuestas abiertas.")
 
-            # Filtrar columnas de texto
             text_columns = st.session_state['df_global'].select_dtypes(include=['object']).columns.tolist()
             text_columns_filtered = [col for col in text_columns if st.session_state['df_global'][col].nunique() > 20]
             
@@ -156,7 +168,6 @@ if check_password():
                     analysis_options['num_topics'] = num_topics
                     analysis_options['topic_method'] = topic_method
                 
-                # Campos para la IA
                 st.subheader("Interacción con IA (opcional)")
                 ai_model_choice = st.selectbox(
                     "Selecciona el modelo de IA:",
@@ -208,7 +219,6 @@ if check_password():
                     key="crit_col"
                 )
                 
-                # Filtra las columnas de preguntas para que no incluyan la columna de criterio
                 question_cols = [col for col in all_cols if col != crit_col]
                 selected_question_cols = st.multiselect(
                     "Selecciona las preguntas a analizar por grupo:",
