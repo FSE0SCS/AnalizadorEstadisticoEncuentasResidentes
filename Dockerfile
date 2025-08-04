@@ -1,3 +1,6 @@
+# Dockerfile
+# Este archivo define la imagen de Docker para la aplicación de Streamlit.
+
 # Usa una imagen base de Python más completa y estable para asegurar las herramientas de compilación
 FROM python:3.9
 
@@ -22,24 +25,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Instala las dependencias de Python, especificando el índice extra para PyTorch
-# Esto es CRUCIAL para que pip encuentre las versiones +cpu de torch
+# Instala las dependencias de Python, especificando el índice extra para PyTorch.
+# Esto es CRUCIAL para que pip encuentre las versiones +cpu de torch.
 RUN pip install --no-cache-dir -r requirements.txt -f https://download.pytorch.org/whl/torch_stable.html
 
-# Descarga los datos de NLTK durante la construcción de la imagen
-# Esto asegura que estén disponibles y no se descarguen en cada arranque
+# Descarga los datos de NLTK durante la construcción de la imagen.
+# Esto asegura que estén disponibles y no se descarguen en cada arranque, lo que acelera el inicio de la app.
 ENV NLTK_DATA /app/nltk_data
 RUN python -c "import nltk; nltk.download('stopwords', download_dir='/app/nltk_data'); nltk.download('punkt', download_dir='/app/nltk_data')"
 
-# INSTALACIÓN DIRECTA DEL MODELO DE SPACY DESDE LA URL
+# INSTALACIÓN DIRECTA DEL MODELO DE SPACY DESDE LA URL.
+# Esta es una forma robusta de asegurar que el modelo correcto esté disponible.
 RUN pip install https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.4.0/es_core_news_sm-3.4.0-py3-none-any.whl
 
 # Copia el resto de los archivos de tu aplicación al contenedor
 COPY . .
 
-# Expone el puerto que Streamlit usará
+# Expone el puerto por defecto de Streamlit
 EXPOSE 8501
 
-# Comando para ejecutar la aplicación Streamlit cuando el contenedor se inicie
-# `--server.port` y `--server.enableCORS` son importantes para el despliegue web
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.enableCORS=true", "--server.enableXsrfProtection=false"]
+# Comando para ejecutar la aplicación de Streamlit cuando el contenedor se inicie
+CMD ["streamlit", "run", "app.py"]

@@ -13,3 +13,5 @@ openai
 anthropic
 Pillow
 thinc==8.1.10
+torch==2.3.1+cpu
+openpyxl

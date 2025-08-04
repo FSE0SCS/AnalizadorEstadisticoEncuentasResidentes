@@ -1,5 +1,5 @@
 # modulo_2st.py
-# Versión optimizada para despliegue en Streamlit Cloud
+# Versión optimizada para despliegue en Streamlit Cloud y con mejoras de modularidad.
 
 import pandas as pd
 import numpy as np
@@ -20,6 +20,8 @@ import streamlit as st
 from datetime import datetime
 import re
 import os
+import json # Necesario para manejar la respuesta JSON del API
+from concurrent.futures import ThreadPoolExecutor
 
 # --- Configuración Inicial y Descarga de Recursos (Adaptado para Streamlit) ---
 
@@ -32,35 +34,43 @@ NLTK_DATA_PATH = os.path.join(os.path.dirname(__file__), "nltk_data")
 
 @st.cache_resource
 def download_nltk_resources():
+    """
+    Descarga y configura los recursos de NLTK.
+    Usa st.cache_resource para evitar descargas repetidas.
+    """
     if NLTK_DATA_PATH not in nltk.data.path:
         nltk.data.path.append(NLTK_DATA_PATH)
     os.makedirs(NLTK_DATA_PATH, exist_ok=True)
 
     try:
         nltk.data.find('corpora/stopwords', paths=[NLTK_DATA_PATH])
-    except Exception as e:
-        st.warning(f"Error al encontrar stopwords de NLTK, intentando descargar: {e}")
+    except nltk.downloader.DownloadError:
         nltk.download('stopwords', download_dir=NLTK_DATA_PATH)
+    
     try:
         nltk.data.find('tokenizers/punkt', paths=[NLTK_DATA_PATH])
-    except Exception as e:
-        st.warning(f"Error al encontrar tokenizers/punkt de NLTK, intentando descargar: {e}")
+    except nltk.downloader.DownloadError:
         nltk.download('punkt', download_dir=NLTK_DATA_PATH)
-    st.success("Recursos de NLTK (stopwords, punkt) cargados.")
-
+        
+# Cargar modelo de spaCy
 @st.cache_resource
 def load_spacy_model():
+    """
+    Carga el modelo de spaCy una única vez.
+    """
     try:
-        # --- MODELO LIGERO PARA OPTIMIZAR MEMORIA ---
         nlp_es = spacy.load("es_core_news_sm")
-        st.success("Modelo spaCy 'es_core_news_sm' cargado.")
         return nlp_es
-    except Exception as e:
-        st.error(f"Error al cargar el modelo spaCy 'es_core_news_sm': {e}. Asegúrate de que está correctamente instalado.")
-        return None
-
-download_nltk_resources()
-nlp_es = load_spacy_model()
+    except OSError:
+        st.error("El modelo 'es_core_news_sm' de spaCy no está instalado.")
+        st.info("Intentando descargar e instalar el modelo...")
+        try:
+            spacy.cli.download("es_core_news_sm")
+            nlp_es = spacy.load("es_core_news_sm")
+            return nlp_es
+        except Exception as e:
+            st.error(f"Error al descargar o cargar el modelo de spaCy: {e}")
+            return None
 
 # --- Funciones Auxiliares (adaptadas para Streamlit) ---
 
@@ -77,212 +87,218 @@ def _log_message_streamlit(message, level="info"):
     elif level == "success":
         st.success(message)
     else:
-        st.write(message) # Default
+        st.write(message) # Default para cualquier otro nivel
 
 def _clean_text(text):
-    """Limpia el texto: minúsculas, elimina números, signos de puntuación y espacios extra."""
-    text = str(text).lower()
-    text = re.sub(r'\d+', '', text) # Eliminar números
-    text = re.sub(r'[^\w\s]', '', text) # Eliminar puntuación
+    """
+    Función de pre-procesamiento de texto.
+    """
+    if not isinstance(text, str):
+        return ""
+    text = text.lower()
+    text = re.sub(r'[^a-záéíóúüñ\s]', '', text) # Eliminar caracteres especiales
     text = re.sub(r'\s+', ' ', text).strip() # Eliminar espacios extra
     return text
 
-def _tokenize_and_stem(text, lang='spanish'):
-    """Tokeniza, elimina stopwords y aplica stemming."""
-    if not text or not isinstance(text, str):
-        return []
-    
-    try:
-        stop_words = set(stopwords.words(lang))
-    except LookupError:
-        nltk.download('stopwords', download_dir=NLTK_DATA_PATH)
-        stop_words = set(stopwords.words(lang))
-
-    stemmer = PorterStemmer()
-    words = word_tokenize(text)
-    filtered_words = [stemmer.stem(w) for w in words if w.isalpha() and w not in stop_words]
-    return filtered_words
-
-def _lemmatize_text(text, nlp_model):
-    """Lemmatiza el texto usando spaCy."""
-    if not text or not isinstance(text, str) or nlp_model is None:
-        return []
-    doc = nlp_model(text)
-    lemmas = [token.lemma_ for token in doc if not token.is_stop and not token.is_punct and token.is_alpha]
-    return lemmas
-
-# --- Funciones de Análisis de PLN ---
-
-def perform_frequency_analysis(df, text_columns, use_lemmas=False, nlp_model=None):
+def _get_lemmas_with_spacy(text, nlp_es):
     """
-    Realiza análisis de frecuencia de palabras y N-gramas.
-    Retorna un diccionario de resultados y una lista de figuras de matplotlib.
+    Genera lemas para un texto usando spaCy.
     """
-    _log_message_streamlit("Iniciando análisis de frecuencia de palabras y N-gramas...", "info")
+    if not nlp_es:
+        return ""
+    doc = nlp_es(text)
+    lemmas = [token.lemma_ for token in doc if not token.is_stop and token.is_alpha]
+    return " ".join(lemmas)
+
+def _generate_word_frequency_chart(df_freq, title):
+    """
+    Genera un gráfico de barras para la frecuencia de palabras.
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.barplot(x='frecuencia', y='palabra', data=df_freq, ax=ax)
+    ax.set_title(title)
+    ax.set_xlabel("Frecuencia")
+    ax.set_ylabel("Palabra")
+    return fig
+
+# --- Lógica de Análisis ---
+
+def perform_sentiment_analysis(df, text_columns):
+    """
+    Realiza un análisis de sentimiento básico en las columnas de texto.
+    """
+    results = {}
+    for col in text_columns:
+        if col in df.columns:
+            df[f'{col}_sentiment'] = df[col].astype(str).apply(lambda x: TextBlob(x).sentiment.polarity)
+            avg_sentiment = df[f'{col}_sentiment'].mean()
+            results[col] = avg_sentiment
+    return results
+
+def perform_frequency_analysis(df, text_columns):
+    """
+    Realiza un análisis de frecuencia de palabras y n-gramas.
+    """
+    download_nltk_resources()
+    stop_words = set(stopwords.words('spanish'))
     results = {}
     figures = []
     
     for col in text_columns:
-        if col not in df.columns:
-            _log_message_streamlit(f"La columna '{col}' no se encuentra en el DataFrame. Saltando.", "warning")
-            continue
+        if col in df.columns:
+            text_series = df[col].astype(str).dropna()
+            if text_series.empty:
+                continue
 
-        corpus = df[col].astype(str).apply(_clean_text).tolist()
-        corpus = [text for text in corpus if text.strip()]
-
-        if not corpus:
-            _log_message_streamlit(f"No hay texto válido en la columna '{col}' para analizar.", "warning")
-            continue
-
-        if use_lemmas and nlp_model:
-            processed_text = [' '.join(_lemmatize_text(text, nlp_model)) for text in corpus]
-        else:
-            processed_text = [' '.join(_tokenize_and_stem(text)) for text in corpus]
-
-        vectorizer = TfidfVectorizer(max_features=5000, ngram_range=(1, 3))
-        X = vectorizer.fit_transform(processed_text)
-        feature_names = vectorizer.get_feature_names_out()
-        
-        word_counts = X.sum(axis=0)
-        frequencies = pd.DataFrame(word_counts, columns=feature_names).T.sort_values(by=0, ascending=False)
-        frequencies.columns = ['Frecuencia']
-        
-        results[col] = frequencies.head(20)
-        _log_message_streamlit(f"Análisis de frecuencia para '{col}' completado.", "success")
-
-        fig, ax = plt.subplots(figsize=(10, 7))
-        sns.barplot(x=frequencies.head(15).index, y=frequencies.head(15)['Frecuencia'], ax=ax, palette='viridis')
-        ax.set_title(f"Top 15 Palabras/N-gramas en '{col}'")
-        ax.set_xlabel("Palabra/N-grama")
-        ax.set_ylabel("Frecuencia")
-        plt.xticks(rotation=45, ha='right')
-        plt.tight_layout()
-        figures.append((col, fig))
-        plt.close(fig)
-
-    return results, figures
-
-def perform_topic_modeling(df, text_columns, num_topics=5, method='NMF', use_lemmas=False, nlp_model=None):
-    """
-    Realiza modelado de temas (NMF o LDA).
-    Retorna un diccionario de temas y una lista de figuras de matplotlib.
-    """
-    _log_message_streamlit(f"Iniciando modelado de temas ({method})...", "info")
-    results = {}
-    figures = []
-
-    for col in text_columns:
-        if col not in df.columns:
-            _log_message_streamlit(f"La columna '{col}' no se encuentra en el DataFrame. Saltando.", "warning")
-            continue
-
-        corpus = df[col].astype(str).apply(_clean_text).tolist()
-        corpus = [text for text in corpus if text.strip()]
-
-        if not corpus:
-            _log_message_streamlit(f"No hay texto válido en la columna '{col}' para modelado de temas.", "warning")
-            continue
-
-        if use_lemmas and nlp_model:
-            processed_text = [' '.join(_lemmatize_text(text, nlp_model)) for text in corpus]
-        else:
-            processed_text = [' '.join(_tokenize_and_stem(text)) for text in corpus]
-        
-        if method == 'LDA':
-            vectorizer = CountVectorizer(max_df=0.95, min_df=2, max_features=1000, stop_words=stopwords.words('spanish'))
-        else: # NMF
-            vectorizer = TfidfVectorizer(max_df=0.95, min_df=2, max_features=1000, stop_words=stopwords.words('spanish'))
-            
-        dtm = vectorizer.fit_transform(processed_text)
-        feature_names = vectorizer.get_feature_names_out()
-
-        model = None
-        if method == 'NMF':
-            model = NMF(n_components=num_topics, random_state=1, init='nndsvda', max_iter=200)
-        elif method == 'LDA':
-            model = LatentDirichletAllocation(n_components=num_topics, random_state=1, max_iter=10)
-        else:
-            _log_message_streamlit(f"Método de modelado de temas '{method}' no soportado.", "error")
-            continue
-
-        model.fit(dtm)
-
-        topics = []
-        for topic_idx, topic in enumerate(model.components_):
-            top_words_idx = topic.argsort()[:-10 - 1:-1]
-            top_words = [feature_names[i] for i in top_words_idx]
-            topics.append(f"Tema {topic_idx + 1}: {' '.join(top_words)}")
-            
-        results[col] = topics
-        _log_message_streamlit(f"Modelado de temas para '{col}' completado.", "success")
-
-    return results, figures
-
-# --- Interacción con APIs de IA (Desactivada) ---
-
-def interact_with_ai(model_choice, text_to_analyze, prompt, max_tokens=150):
-    """
-    Función de interacción con IA. Desactivada por defecto.
-    """
-    _log_message_streamlit("La funcionalidad de IA está desactivada en esta versión.", "info")
-    return "Funcionalidad de IA desactivada."
-
-
-# --- Exportación a Word ---
-
-def export_qualitative_results_to_word(analysis_results_sequence):
-    """
-    Genera un documento Word con los resultados del análisis cualitativo.
-    Recibe una secuencia de tuplas: ('text', title, content) o ('image_bytes', title, bytes_io_obj).
-    Devuelve un objeto BytesIO que contiene el documento Word.
-    """
-    if not analysis_results_sequence:
-        return None
-
-    doc = Document()
-    doc.add_heading("📝 Informe de Análisis Cualitativo y PLN", 0)
-    doc.add_paragraph("Este informe detalla los análisis de procesamiento de lenguaje natural y las interacciones con modelos de inteligencia artificial.\n")
-
-    for item_type, title, content in analysis_results_sequence:
-        if item_type == 'text':
-            if title:
-                doc.add_heading(title, level=1) 
-            doc.add_paragraph(content)
-        elif item_type == 'image_bytes':
+            vectorizer = CountVectorizer(stop_words=list(stop_words), ngram_range=(1, 2))
             try:
-                content.seek(0)
-                doc.add_picture(content, width=Inches(6))
-            except Exception as e:
-                doc.add_paragraph(f"(Error al insertar imagen {title}: {e})")
+                X = vectorizer.fit_transform(text_series)
+                sum_words = X.sum(axis=0)
+                words_freq = [(word, sum_words[0, idx]) for word, idx in vectorizer.vocabulary_.items()]
+                words_freq = sorted(words_freq, key=lambda x: x[1], reverse=True)
+                
+                df_freq = pd.DataFrame(words_freq[:20], columns=['palabra', 'frecuencia'])
+                results[col] = df_freq
+                
+                if not df_freq.empty:
+                    fig = _generate_word_frequency_chart(df_freq, f"Top 20 Frecuencia de Palabras y N-gramas - Columna: {col}")
+                    figures.append((col, fig))
+            except ValueError:
+                # Ocurre si el texto no tiene palabras después de la limpieza
+                continue
+                
+    return results, figures
+
+def perform_topic_modeling(df, text_columns, num_topics, topic_method, use_lemmas, nlp_es):
+    """
+    Realiza un modelado de temas (NMF o LDA).
+    """
+    results = {}
     
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer
+    for col in text_columns:
+        if col in df.columns:
+            text_series = df[col].astype(str).dropna()
+            if text_series.empty:
+                continue
+                
+            corpus = text_series.apply(_clean_text)
+            if use_lemmas:
+                corpus = corpus.apply(lambda x: _get_lemmas_with_spacy(x, nlp_es))
+            
+            if corpus.empty:
+                continue
 
-# --- Función Principal para Streamlit ---
+            vectorizer = TfidfVectorizer(max_df=0.95, min_df=2, stop_words=stopwords.words('spanish'))
+            try:
+                dtm = vectorizer.fit_transform(corpus)
+                
+                if topic_method == 'NMF':
+                    model = NMF(n_components=num_topics, random_state=1)
+                else:
+                    model = LatentDirichletAllocation(n_components=num_topics, random_state=1)
+                    
+                model.fit(dtm)
+                
+                feature_names = vectorizer.get_feature_names_out()
+                topics = []
+                for topic_idx, topic in enumerate(model.components_):
+                    top_words_idx = topic.argsort()[:-10 - 1:-1]
+                    top_words = [feature_names[i] for i in top_words_idx]
+                    topics.append(f"Tema #{topic_idx+1}: " + ", ".join(top_words))
+                
+                results[col] = topics
+            except ValueError:
+                # Ocurre si el corpus está vacío
+                continue
+                
+    return results, None # Retorna None para el gráfico por ahora
 
-def run_qualitative_analysis_streamlit(df_input, text_columns, analysis_options, ai_prompt=None, ai_model_choice=None):
+def export_text_analysis_to_word(results_sequence, summary_text=""):
     """
-    Función principal para ejecutar el análisis cualitativo en Streamlit.
+    Exporta los resultados del análisis de texto a un documento de Word.
     """
-    if df_input is None or df_input.empty:
-        _log_message_streamlit("No se han cargado datos válidos para el análisis cualitativo.", "warning")
-        return [], None, "NoData"
+    document = Document()
+    document.add_heading('Informe de Análisis de Texto', 0)
+    document.add_paragraph(f"Generado el: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    if summary_text:
+        document.add_paragraph(summary_text)
 
-    if not text_columns:
-        _log_message_streamlit("No se han seleccionado columnas de texto para el análisis.", "warning")
-        return [], None, "NoTextColumns"
+    for result_type, title, content in results_sequence:
+        if result_type == 'text':
+            document.add_heading(title, level=1)
+            document.add_paragraph(content)
+        elif result_type == 'image_bytes':
+            document.add_heading(title, level=1)
+            document.add_picture(content, width=Inches(6))
+        
+    buf = io.BytesIO()
+    document.save(buf)
+    buf.seek(0)
+    return buf
 
+# --- Función de Interacción con IA (Nueva y Modular) ---
+
+async def interact_with_ai(ai_model_choice, text_for_ai, user_prompt):
+    """
+    Simula una interacción con un modelo de IA.
+    NOTA: Para una implementación real, se debe insertar aquí la lógica
+    para llamar a la API del modelo de IA (por ejemplo, Gemini).
+    """
+    # Placeholder de respuesta para que el código sea ejecutable
+    if ai_model_choice == "Gemini":
+        prompt_with_context = f"Contexto de la encuesta: {text_for_ai[:1000]}...\n\nPrompt: {user_prompt}"
+        
+        # Aquí iría el código para llamar a la API de Gemini
+        # Ejemplo (requiere una clave de API válida):
+        """
+        import google.generativeai as genai
+        # genai.configure(api_key="TU_API_KEY_AQUÍ")
+        # model = genai.GenerativeModel('gemini-pro')
+        # response = model.generate_content(prompt_with_context)
+        # return response.text
+        """
+        
+        return (
+            "Este es un resultado simulado de la IA. "
+            "Para obtener un resultado real, es necesario "
+            "habilitar y configurar la conexión a la API "
+            "de un modelo como Gemini."
+        )
+    else:
+        return "Modelo de IA no reconocido o no configurado."
+
+# --- FUNCIÓN PRINCIPAL DE ANÁLISIS DE TEXTO ---
+
+def perform_text_analysis(df_input, text_columns, analysis_options):
+    """
+    Función principal para coordinar el análisis de texto.
+    """
+    # Cargar los recursos de NLTK y el modelo de spaCy
+    download_nltk_resources()
+    nlp_es = load_spacy_model()
+    
+    if nlp_es is None:
+        _log_message_streamlit("❌ No se pudo cargar el modelo de spaCy, el análisis de texto será limitado.", "error")
+        return None, "error", "No se pudo cargar el modelo de spaCy para lematización."
+
+    _log_message_streamlit("🔄 Iniciando análisis de texto...", "info")
     analysis_results_sequence = []
     
-    # === Análisis de Frecuencia ===
-    if analysis_options.get('frequency', False):
-        freq_results, freq_figures = perform_frequency_analysis(df_input, text_columns, use_lemmas=True, nlp_model=nlp_es)
+    # === Análisis de Sentimiento ===
+    if analysis_options.get('sentiment_analysis', False):
+        sentiment_results = perform_sentiment_analysis(df_input, text_columns)
+        sentiment_text_content = "Análisis de Sentimiento (polaridad promedio):\n"
+        for col, avg_pol in sentiment_results.items():
+            sentiment_text_content += f"- Columna '{col}': {avg_pol:.2f} (Positivo > 0, Neutro = 0, Negativo < 0)\n"
+        analysis_results_sequence.append(('text', "Análisis de Sentimiento", sentiment_text_content))
+
+    # === Frecuencia de Palabras ===
+    if analysis_options.get('word_frequency', False):
+        freq_results, freq_figures = perform_frequency_analysis(df_input, text_columns)
         
-        freq_text_content = "Resultados de frecuencia para las columnas seleccionadas:\n\n"
-        for col, res in freq_results.items():
-            freq_text_content += f"**Columna: {col}**\n"
+        freq_text_content = ""
+        for col_name, res in freq_results.items():
+            freq_text_content += f"📊 Frecuencia para '{col_name}':\n"
             freq_text_content += res.to_string() + "\n\n"
         analysis_results_sequence.append(('text', "Análisis de Frecuencia de Palabras y N-gramas", freq_text_content))
         
@@ -305,8 +321,34 @@ def run_qualitative_analysis_streamlit(df_input, text_columns, analysis_options,
             for topic_str in topics_list:
                 topic_text_content += f"- {topic_str}\n"
             topic_text_content += "\n"
-        analysis_results_sequence.append(('text', "Modelado de Temas", topic_text_content))
+        analysis_results_sequence.append(('text', "Modelado de Temas (NMF/LDA)", topic_text_content))
 
-    word_doc_bytes = export_qualitative_results_to_word(analysis_results_sequence)
-    _log_message_streamlit("✅ Análisis cualitativo completado.", "success")
-    return analysis_results_sequence, word_doc_bytes, "Success"
+    # === Interacción con IA (si está habilitada) ===
+    ai_model_choice = analysis_options.get('ai_model', None)
+    ai_prompt = analysis_options.get('ai_prompt', None)
+
+    if ai_model_choice and ai_prompt:
+        # Concatenar todo el texto de las columnas seleccionadas
+        all_text_for_ai = ""
+        for col in text_columns:
+            if col in df_input.columns:
+                all_text_for_ai += " ".join(df_input[col].astype(str).dropna().tolist()) + " "
+
+        all_text_for_ai = _clean_text(all_text_for_ai)
+        
+        if all_text_for_ai:
+            _log_message_streamlit(f"Enviando {len(all_text_for_ai)} caracteres de texto a {ai_model_choice}...", "info")
+            if len(all_text_for_ai) > 10000:
+                _log_message_streamlit("Texto de entrada a la IA es muy largo, se truncará a 10,000 caracteres.", "warning")
+                all_text_for_ai = all_text_for_ai[:10000]
+
+            ai_response = interact_with_ai(ai_model_choice, all_text_for_ai, ai_prompt)
+            
+            analysis_results_sequence.append(('text', f"Respuesta de IA ({ai_model_choice})", f"**Prompt utilizado:**\n{ai_prompt}\n\n**Respuesta de la IA:**\n{ai_response}"))
+
+    # === Exportar a Word ===
+    word_document_bytes = export_text_analysis_to_word(analysis_results_sequence, "Resumen del análisis de texto...")
+    
+    _log_message_streamlit("✅ Análisis de texto completado.", "success")
+    
+    return word_document_bytes, "success", "Análisis de texto completado."

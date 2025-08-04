@@ -12,6 +12,10 @@ import streamlit as st # Importa streamlit para las funciones de UI
 
 # No necesitamos ttkbootstrap, tkinter, etc. aquí
 
+# Usamos un Lock para proteger la barra de progreso de Streamlit,
+# ya que no es 'thread-safe'
+progress_lock = threading.Lock()
+
 def _log_message_streamlit(message, level="info"):
     """
     Función auxiliar para mostrar mensajes en la interfaz de Streamlit.
@@ -28,165 +32,120 @@ def _log_message_streamlit(message, level="info"):
     else:
         st.write(message) # Default para cualquier otro nivel
 
-def _process_single_excel_file(file_obj, is_first_file, num_file, total_files, progress_bar_update_func, log_func):
+# --- FUNCIÓN CORREGIDA ---
+def _process_single_excel_file(file_obj, filename, is_first_file, num_file, total_files, progress_bar_update_func, log_func):
     """
     Lógica para procesar un archivo individual de Excel.
     Se ejecuta en un hilo/proceso separado.
+    
+    Args:
+        file_obj (UploadedFile): El objeto de archivo de Streamlit.
+        filename (str): El nombre del archivo, pasado como argumento separado.
+        is_first_file (bool): True si es el primer archivo.
+        num_file (int): Número de archivo actual (1-based).
+        total_files (int): Número total de archivos.
+        progress_bar_update_func (callable): Función para actualizar la barra de progreso.
+        log_func (callable): Función para registrar mensajes.
     """
-    filename = file_obj.name # El nombre del archivo en Streamlit UploadedFile
     
     try:
         start_time = time.time()
         
         # Actualizar progreso (asumiendo que progress_bar_update_func es una callback)
-        progress_value = ((num_file - 1) / total_files) * 100
-        progress_bar_update_func(progress_value, f"Procesando {filename} ({num_file}/{total_files})...")
+        progress_bar_update_func(int((num_file / total_files) * 100), f"Procesando archivo {num_file} de {total_files}: {filename}")
         
-        log_func(f"🔍 Procesando archivo {num_file}/{total_files}: {filename}", "info")
+        log_func(f"📂 Procesando archivo: {filename}", "info")
         
-        # Leer archivo Excel. io.BytesIO(file_obj.read()) es crucial para Streamlit
-        df = pd.read_excel(
-            io.BytesIO(file_obj.read()), # Lee el contenido binario del archivo subido
-            header=None,
-            usecols=range(83),  # Columnas A-CE
-            dtype=str,
-            na_filter=False
-        )
+        # Leer el archivo con pandas
+        df = pd.read_excel(file_obj)
+        df_processed = df.copy()
         
-        log_func(f"  📊 Dimensiones: {df.shape[0]} filas x {df.shape[1]} columnas", "info")
-        
-        # Ajustar columnas si es necesario
-        while df.shape[1] < 83:
-            df[df.shape[1]] = ''
-        
-        result = {
-            'filename': filename,
-            'valid_rows': [],
-            'processed_rows_count': 0
-        }
-        
-        # Procesar encabezados
-        data_start_row_index = 1 if len(df) > 0 else 0
-        if is_first_file and len(df) > 0:
-            result['valid_rows'].append(df.iloc[0].values.tolist())
-            log_func(f"  📋 Encabezados incluidos desde: {filename}", "info")
-        
-        # Procesar datos con vectorización
-        if len(df) > data_start_row_index:
-            rows_data = df.iloc[data_start_row_index:].values
+        # Verificar si hay filas y columnas válidas
+        if df_processed.empty:
+            log_func(f"⚠️ El archivo '{filename}' está vacío y será omitido.", "warning")
+            return [], 0, 0
             
-            # Considera una fila válida si cualquier celda en la fila (A-CE) no está vacía o solo con espacios
-            # Y también si hay datos en las columnas B-CE (índice 1 en adelante)
-            # Esto intenta replicar la lógica original más fielmente
-            non_empty_cells_overall = np.any((rows_data != '') & (rows_data != ' '), axis=1)
-            non_empty_cells_b_to_ce = np.any((rows_data[:, 1:] != '') & (rows_data[:, 1:] != ' '), axis=1)
-            
-            # Una fila es válida si hay contenido en cualquier parte Y hay contenido más allá de la primera columna
-            valid_mask = non_empty_cells_overall & non_empty_cells_b_to_ce
-            
-            valid_rows_array = rows_data[valid_mask]
-            
-            if len(valid_rows_array) > 0:
-                result['valid_rows'].extend(valid_rows_array.tolist())
-            
-            result['processed_rows_count'] = len(valid_rows_array)
+        # Añadir columnas de metadatos
+        df_processed['filename'] = filename
+        df_processed['processed_date'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        processing_time = time.time() - start_time
-        speed = result['processed_rows_count'] / processing_time if processing_time > 0 else 0
+        rows_to_return = df_processed.to_dict('records')
+        rows_count = len(rows_to_return)
         
-        log_func(
-            f"  ✅ {filename}: {result['processed_rows_count']} filas válidas "
-            f"en {processing_time:.2f}s ({speed:.0f} filas/s)",
-            "success"
-        )
+        end_time = time.time()
+        time_taken = end_time - start_time
         
-        return result
-            
+        log_func(f"✅ Archivo '{filename}' procesado en {time_taken:.2f} segundos. {rows_count:,} filas.", "success")
+        
+        return rows_to_return, rows_count, time_taken
+        
     except Exception as e:
-        log_func(f"  ❌ Error procesando {filename}: {str(e)}", "error")
-        return {
-            'filename': filename,
-            'valid_rows': [],
-            'processed_rows_count': 0,
-            'error': str(e)
-        }
+        log_func(f"❌ Error al procesar el archivo '{filename}': {str(e)}", "error")
+        return [], 0, 0
 
-def merge_excel_files_streamlit(uploaded_files):
+# --- FUNCIÓN CORREGIDA ---
+def fusionar_archivos_excel_multithreaded(uploaded_files, update_progress):
     """
-    Función principal para fusionar archivos Excel en Streamlit.
-    Toma una lista de objetos UploadedFile de Streamlit.
-    Devuelve un DataFrame de pandas y un mensaje de estado.
+    Fusiona múltiples archivos Excel en un solo DataFrame de forma multihilo.
+    
+    Args:
+        uploaded_files (list): Una lista de objetos UploadedFile de Streamlit.
+        update_progress (callable): La función de la barra de progreso de Streamlit.
+        
+    Returns:
+        tuple: (DataFrame resultante, estado, mensaje)
     """
     if not uploaded_files:
-        return None, "warning", "No se han subido archivos Excel."
-
-    start_total_time = time.time()
-    _log_message_streamlit("🚀 Iniciando procesamiento ultra rápido...", "info")
+        return None, "error", "No se subieron archivos para procesar."
     
     all_rows = []
     total_processed_rows = 0
+    total_time_taken = 0
+    successful_files_count = 0
     
-    # Placeholder para la barra de progreso de Streamlit
-    progress_text = st.empty()
-    progress_bar = st.progress(0)
+    # Creamos un Lock para proteger la barra de progreso de Streamlit
+    with progress_lock:
+        update_progress(0, "🚀 Iniciando procesamiento...")
 
-    def update_progress(value, text):
-        progress_bar.progress(int(value))
-        progress_text.text(text)
-        
-    def st_log_func(message, level):
-        # Esta función simple solo reenvía los mensajes a la función Streamlit _log_message_streamlit
-        _log_message_streamlit(message, level)
-        
     try:
-        # Preparamos los argumentos para el procesamiento paralelo
-        processing_args = []
-        for i, file_obj in enumerate(uploaded_files):
-            is_first_file = (i == 0)
-            processing_args.append((file_obj, is_first_file, i + 1, len(uploaded_files), update_progress, st_log_func))
+        # La cantidad de hilos puede ser ajustada
+        max_workers = min(os.cpu_count() or 1, len(uploaded_files))
         
-        results = []
-        if len(uploaded_files) == 1:
-            _log_message_streamlit("📊 Procesando archivo único...", "info")
-            results.append(_process_single_excel_file(processing_args[0][0], processing_args[0][1], processing_args[0][2], processing_args[0][3], processing_args[0][4], processing_args[0][5]))
-        else:
-            _log_message_streamlit("📊 Procesando primer archivo (encabezados)...", "info")
-            # Procesar el primer archivo secuencialmente para asegurar la obtención de encabezados
-            first_file_result = _process_single_excel_file(processing_args[0][0], processing_args[0][1], processing_args[0][2], processing_args[0][3], processing_args[0][4], processing_args[0][5])
-            results.append(first_file_result)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            
+            def update_progress_threadsafe(percentage, message):
+                """Callback thread-safe para actualizar la barra de progreso."""
+                with progress_lock:
+                    update_progress(percentage, message)
 
-            _log_message_streamlit("⚡ Procesando archivos restantes en paralelo...", "info")
-            # Los archivos restantes en paralelo
-            # Usar max_workers para evitar sobrecargar, 4 es un buen valor por defecto
-            with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as executor:
-                # Cuidado: no pasar objetos de archivo directamente si se van a leer múltiples veces en hilos.
-                # Aquí, la lectura `.read()` ya se hace dentro de `_process_single_excel_file`,
-                # así que cada hilo obtendrá su propia copia de los bytes del archivo.
-                # Para evitar re-leer bytes en cada re-ejecución, podrías pre-leer los bytes
-                # y pasarlos como io.BytesIO a cada llamada.
-                
-                # Para un solo paso, la lectura directa de file_obj.read() dentro del worker es aceptable.
-                # Si esto fuera un problema de rendimiento, optimizaríamos pre-leyendo.
-                
-                # Mapear los argumentos a la función
-                parallel_results = list(executor.map(
-                    lambda p_args: _process_single_excel_file(*p_args),
-                    processing_args[1:]
-                ))
-                results.extend(parallel_results)
-        
-        # Consolidar resultados
-        successful_files_count = 0
-        for result in results:
-            if result and 'error' not in result:
-                all_rows.extend(result['valid_rows'])
-                total_processed_rows += result['processed_rows_count']
-                successful_files_count += 1
-            elif result and 'error' in result:
-                _log_message_streamlit(f"❌ Error en {result['filename']}: {result['error']}", "error")
-        
-        total_time_taken = time.time() - start_total_time
-        
+            # Usamos un diccionario para mantener el orden de los archivos
+            futures = {
+                executor.submit(
+                    _process_single_excel_file,
+                    file_obj,
+                    file_obj.name,  # PASAMOS EL NOMBRE COMO ARGUMENTO SEPARADO
+                    i == 0, 
+                    i + 1, 
+                    len(uploaded_files), 
+                    update_progress_threadsafe, 
+                    _log_message_streamlit
+                ): (file_obj, i) 
+                for i, file_obj in enumerate(uploaded_files)
+            }
+            
+            for future in futures:
+                try:
+                    rows, rows_count, time_taken = future.result()
+                    if rows_count > 0:
+                        all_rows.extend(rows)
+                        total_processed_rows += rows_count
+                        total_time_taken += time_taken
+                        successful_files_count += 1
+                except Exception as e:
+                    # El error ya se registra dentro del hilo, pero lo manejamos aquí también
+                    _log_message_streamlit(f"Error recuperando resultado del hilo: {str(e)}", "error")
+                    
+        # --- Lógica de Consolidación y Resumen ---
         if all_rows:
             # Convertir la lista de listas a DataFrame
             final_df = pd.DataFrame(all_rows)
@@ -212,6 +171,4 @@ def merge_excel_files_streamlit(uploaded_files):
     except Exception as e:
         _log_message_streamlit(f"❌ Error crítico durante el procesamiento: {str(e)}", "error")
         update_progress(100, "❌ Error crítico.")
-        return None, "error", f"Error crítico durante el procesamiento:\n{str(e)}"
-
-# No se necesita el bloque if __name__ == "__main__": aquí, ya que será importado por app.py
+        return None, "error", f"Error crítico: {str(e)}"
